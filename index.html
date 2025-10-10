@@ -1,0 +1,306 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Euler V2 Vault Deposits Tracker</title>
+    <link rel="stylesheet" href="style.css">
+    <script src="https://cdn.jsdelivr.net/npm/ethers@6.8.0/dist/ethers.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+</head>
+<body>
+    <!-- Header -->
+    <header class="header">
+        <div class="container">
+            <div class="flex justify-between items-center">
+                <h1 class="header-title">Euler V2 Vault Tracker</h1>
+                <div class="header-actions">
+                    <button id="themeToggle" class="btn btn--secondary btn--sm">🌙</button>
+                    <div id="connectionStatus" class="status status--info">Disconnected</div>
+                </div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <main class="main-content">
+        <div class="container">
+            <!-- Input Section -->
+            <section class="input-section">
+                <div class="card">
+                    <div class="card__body">
+                        <div class="form-grid">
+                            <!-- Vault Address Input -->
+                            <div class="form-group">
+                                <label for="vaultAddress" class="form-label">Vault Contract Address</label>
+                                <div class="input-with-examples">
+                                    <input type="text" id="vaultAddress" class="form-control" 
+                                           placeholder="0xD8b27CF359b7D15710a5BE299AF6e7Bf904984C2"
+                                           title="Enter a valid Ethereum address (0x followed by 40 hex characters)">
+                                    <div class="example-vaults">
+                                        <span class="example-label">Example Vaults:</span>
+                                        <button type="button" class="example-vault" data-address="0x527295f09Ff7c411B213B29a0DE8c816a669b3fe">
+                                            Active Plasma Vault (Known Activity)
+                                        </button>
+                                        <button type="button" class="example-vault" data-address="0xD8b27CF359b7D15710a5BE299AF6e7Bf904984C2">
+                                            Euler Prime WETH (Ethereum)
+                                        </button>
+                                        <button type="button" class="example-vault" data-address="0x716bF454066a84F39A2F78b5707e79a9d64f1225">
+                                            Swaap Lend ETH (Ethereum)
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <!-- Chain Selection -->
+                            <div class="form-group">
+                                <label for="chainSelect" class="form-label">Blockchain Network</label>
+                                <select id="chainSelect" class="form-control">
+                                    <option value="1">Ethereum Mainnet</option>
+                                    <option value="42161">Arbitrum One</option>
+                                    <option value="8453">Base</option>
+                                    <option value="10">Optimism</option>
+                                    <option value="9745">Plasma</option>
+                                </select>
+                            </div>
+
+                            <!-- Block Range -->
+                            <div class="form-group">
+                                <label for="blockRange" class="form-label">Block Range</label>
+                                <select id="blockRange" class="form-control">
+                                    <option value="deployment">From Deployment</option>
+                                    <option value="30days">Last 30 Days</option>
+                                    <option value="90days">Last 90 Days</option>
+                                </select>
+                            </div>
+
+                            <!-- Query Controls -->
+                            <div class="form-group query-controls">
+                                <div class="checkbox-group">
+                                    <label class="checkbox-label">
+                                        <input type="checkbox" id="includeWithdrawn" checked>
+                                        Include Withdrawn Positions
+                                    </label>
+                                </div>
+                                <div class="input-group">
+                                    <label for="minThreshold" class="form-label">Min. Deposit Threshold</label>
+                                    <input type="number" id="minThreshold" class="form-control" value="0" min="0" step="0.01">
+                                </div>
+                            </div>
+
+                            <!-- Action Button -->
+                            <div class="form-group">
+                                <button id="analyzeVault" class="btn btn--primary btn--full-width">
+                                    <span class="btn-text">Analyze Vault</span>
+                                    <span class="loading-spinner hidden">⏳</span>
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- KPI Section -->
+            <section id="kpiSection" class="kpi-section hidden">
+                <div class="kpi-grid">
+                    <div class="kpi-card">
+                        <div class="kpi-icon">💰</div>
+                        <div class="kpi-content">
+                            <div class="kpi-label">Total Value Locked</div>
+                            <div id="totalTVL" class="kpi-value">0</div>
+                            <div id="totalTVLTokens" class="kpi-secondary">0 tokens</div>
+                        </div>
+                    </div>
+
+                    <div class="kpi-card">
+                        <div class="kpi-icon">👥</div>
+                        <div class="kpi-content">
+                            <div class="kpi-label">Unique Depositors</div>
+                            <div id="totalDepositors" class="kpi-value">0</div>
+                            <div id="activeDepositors" class="kpi-secondary">0 active</div>
+                        </div>
+                    </div>
+
+                    <div class="kpi-card">
+                        <div class="kpi-icon">🏆</div>
+                        <div class="kpi-content">
+                            <div class="kpi-label">Largest Position</div>
+                            <div id="largestDeposit" class="kpi-value">0</div>
+                            <div id="largestDepositPercent" class="kpi-secondary">0%</div>
+                        </div>
+                    </div>
+
+                    <div class="kpi-card">
+                        <div class="kpi-icon">📊</div>
+                        <div class="kpi-content">
+                            <div class="kpi-label">Average Deposit</div>
+                            <div id="averageDeposit" class="kpi-value">0</div>
+                            <div id="medianDeposit" class="kpi-secondary">Median: 0</div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Charts Section -->
+            <section id="chartsSection" class="charts-section hidden">
+                <div class="charts-grid">
+                    <!-- Top Depositors Pie Chart -->
+                    <div class="chart-container">
+                        <div class="chart-header">
+                            <h3>Top 10 Depositors</h3>
+                            <div class="chart-subtitle">By percentage of total deposits</div>
+                        </div>
+                        <div class="chart-wrapper" style="position: relative; height: 300px;">
+                            <canvas id="pieChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Cumulative Deposits Timeline -->
+                    <div class="chart-container">
+                        <div class="chart-header">
+                            <h3>Cumulative Deposits Over Time</h3>
+                            <div class="chart-subtitle">Growth of total deposits from blockchain events</div>
+                        </div>
+                        <div class="chart-wrapper" style="position: relative; height: 300px;">
+                            <canvas id="timelineChart"></canvas>
+                        </div>
+                    </div>
+
+                    <!-- Deposit Size Distribution -->
+                    <div class="chart-container full-width">
+                        <div class="chart-header">
+                            <h3>Deposit Size Distribution</h3>
+                            <div class="chart-subtitle">Number of depositors by deposit amount ranges</div>
+                        </div>
+                        <div class="chart-wrapper" style="position: relative; height: 300px;">
+                            <canvas id="distributionChart"></canvas>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Data Table Section -->
+            <section id="tableSection" class="table-section hidden">
+                <div class="card">
+                    <div class="card__header">
+                        <div class="table-header">
+                            <h3>Depositor Details (Live Blockchain Data)</h3>
+                            <div class="table-controls">
+                                <input type="text" id="searchTable" class="form-control table-search" placeholder="Search addresses...">
+                                <select id="pageSize" class="form-control">
+                                    <option value="25">25 rows</option>
+                                    <option value="50">50 rows</option>
+                                    <option value="100">100 rows</option>
+                                </select>
+                                <button id="exportCSV" class="btn btn--outline btn--sm">Export CSV</button>
+                                <button id="exportJSON" class="btn btn--outline btn--sm">Export JSON</button>
+                            </div>
+                        </div>
+                    </div>
+                    <div class="card__body">
+                        <div class="table-container">
+                            <table id="depositorsTable" class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th data-sort="rank">Rank</th>
+                                        <th data-sort="address">Address</th>
+                                        <th data-sort="netDeposit">Net Deposit</th>
+                                        <th data-sort="shares">Shares</th>
+                                        <th data-sort="percentage">% of Pool</th>
+                                        <th data-sort="firstDeposit">First Deposit</th>
+                                        <th data-sort="lastActivity">Last Activity</th>
+                                        <th>Actions</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tableBody">
+                                    <!-- Real blockchain data will be populated here -->
+                                </tbody>
+                            </table>
+                        </div>
+                        
+                        <!-- Pagination -->
+                        <div class="pagination-container">
+                            <div id="paginationInfo" class="pagination-info">Showing 0 to 0 of 0 entries</div>
+                            <div class="pagination">
+                                <button id="prevPage" class="btn btn--outline btn--sm">Previous</button>
+                                <div id="pageNumbers" class="page-numbers"></div>
+                                <button id="nextPage" class="btn btn--outline btn--sm">Next</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Error Section -->
+            <section id="errorSection" class="error-section hidden">
+                <div class="card">
+                    <div class="card__body">
+                        <div class="error-content">
+                            <div class="error-icon">⚠️</div>
+                            <div class="error-message">
+                                <h3>Analysis Failed</h3>
+                                <p id="errorText">Please check your vault address and network selection, then try again.</p>
+                                <div class="error-suggestions">
+                                    <h4>Common Issues:</h4>
+                                    <ul>
+                                        <li>Ensure the address is a valid ERC-4626 vault contract</li>
+                                        <li>Check that you've selected the correct blockchain network</li>
+                                        <li>Verify the vault has deposit/withdrawal activity</li>
+                                        <li>Try a different RPC endpoint if connection fails</li>
+                                    </ul>
+                                </div>
+                                <button id="retryButton" class="btn btn--primary">Retry Analysis</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+
+            <!-- Loading Section -->
+            <section id="loadingSection" class="loading-section hidden">
+                <div class="card">
+                    <div class="card__body">
+                        <div class="loading-content">
+                            <div class="loading-spinner-large">⏳</div>
+                            <h3>Fetching Real Blockchain Data</h3>
+                            <p id="loadingText">Connecting to blockchain network...</p>
+                            <div class="progress-bar">
+                                <div id="progressFill" class="progress-fill"></div>
+                            </div>
+                            <div id="progressText" class="progress-text">0% complete</div>
+                            <div class="loading-steps">
+                                <div class="step-info">
+                                    <small>• Connecting to RPC endpoint</small><br>
+                                    <small>• Validating vault contract</small><br>
+                                    <small>• Querying deposit/withdrawal events</small><br>
+                                    <small>• Processing blockchain data</small>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </section>
+        </div>
+    </main>
+
+    <!-- Footer -->
+    <footer class="footer">
+        <div class="container">
+            <div class="footer-content">
+                <div class="footer-info">
+                    <p><strong>Real Blockchain Data:</strong> This tracker fetches live data from blockchain networks using ethers.js</p>
+                    <p class="footer-disclaimer">This tool connects to real RPC endpoints and displays actual on-chain vault data. Always verify data independently.</p>
+                </div>
+                <div class="footer-links">
+                    <a href="https://docs.euler.finance/" target="_blank">Euler Docs</a>
+                    <a href="https://ethereum.org/en/developers/docs/standards/tokens/erc-4626/" target="_blank">ERC-4626 Standard</a>
+                    <a href="https://docs.ethers.org/" target="_blank">Ethers.js Docs</a>
+                </div>
+            </div>
+        </div>
+    </footer>
+
+    <script src="app.js"></script>
+</body>
+</html>

@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Plasma Vault Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/ethers@6.8.0/dist/ethers.umd.min.js"></script>
+</head>
+<body>
+    <h1>Plasma Vault Connection Test</h1>
+    <button onclick="testConnection()">Test Plasma Connection</button>
+    <button onclick="testContract()">Test Vault Contract</button>
+    <button onclick="testEvents()">Test Events</button>
+    
+    <div id="output" style="margin-top: 20px; padding: 10px; background: #f0f0f0; font-family: monospace; white-space: pre-wrap;"></div>
+
+    <script>
+        const output = document.getElementById('output');
+        const log = (message) => {
+            output.textContent += new Date().toLocaleTimeString() + ': ' + message + '\n';
+            console.log(message);
+        };
+
+        const PLASMA_RPC = 'https://rpc.plasma.to';
+        const VAULT_ADDRESS = '0x527295f09Ff7c411B213B29a0DE8c816a669b3fe';
+
+        async function testConnection() {
+            log('🔗 Testing Plasma RPC connection...');
+            try {
+                const provider = new ethers.JsonRpcProvider(PLASMA_RPC);
+                const network = await provider.getNetwork();
+                const blockNumber = await provider.getBlockNumber();
+                
+                log(`✅ Connected to Plasma network`);
+                log(`   Chain ID: ${network.chainId}`);
+                log(`   Current block: ${blockNumber}`);
+            } catch (error) {
+                log(`❌ Connection failed: ${error.message}`);
+            }
+        }
+
+        async function testContract() {
+            log('🏦 Testing vault contract...');
+            try {
+                const provider = new ethers.JsonRpcProvider(PLASMA_RPC);
+                const abi = [
+                    'function symbol() view returns (string)',
+                    'function name() view returns (string)',
+                    'function asset() view returns (address)',
+                    'function totalAssets() view returns (uint256)',
+                    'function totalSupply() view returns (uint256)',
+                    'function previewDeposit(uint256 assets) view returns (uint256)',
+                    'function maxDeposit(address owner) view returns (uint256)'
+                ];
+                
+                const contract = new ethers.Contract(VAULT_ADDRESS, abi, provider);
+                
+                const symbol = await contract.symbol();
+                const name = await contract.name();
+                const asset = await contract.asset();
+                const totalAssets = await contract.totalAssets();
+                const totalSupply = await contract.totalSupply();
+                
+                log(`✅ Contract validation successful:`);
+                log(`   Name: ${name}`);
+                log(`   Symbol: ${symbol}`);
+                log(`   Asset: ${asset}`);
+                log(`   Total Assets: ${ethers.formatEther(totalAssets)} ETH`);
+                log(`   Total Supply: ${ethers.formatEther(totalSupply)} shares`);
+                
+                // Test ERC-4626 specific functions
+                try {
+                    const previewDeposit = await contract.previewDeposit(ethers.parseEther('1'));
+                    log(`   Preview Deposit (1 ETH): ${ethers.formatEther(previewDeposit)} shares`);
+                } catch (err) {
+                    log(`   ⚠️ previewDeposit failed: ${err.message}`);
+                }
+                
+            } catch (error) {
+                log(`❌ Contract test failed: ${error.message}`);
+            }
+        }
+
+        async function testEvents() {
+            log('📋 Testing event queries...');
+            try {
+                const provider = new ethers.JsonRpcProvider(PLASMA_RPC);
+                const currentBlock = await provider.getBlockNumber();
+                const fromBlock = Math.max(0, currentBlock - 10000); // Last 10k blocks
+                
+                log(`   Searching blocks ${fromBlock} to ${currentBlock}`);
+                
+                // Get all logs from this contract
+                const allLogs = await provider.getLogs({
+                    address: VAULT_ADDRESS,
+                    fromBlock: fromBlock,
+                    toBlock: currentBlock
+                });
+                
+                log(`📊 Found ${allLogs.length} total events in recent blocks`);
+                
+                if (allLogs.length > 0) {
+                    // Group by event signature
+                    const eventsByTopic = {};
+                    allLogs.forEach(log => {
+                        const topic = log.topics[0];
+                        if (!eventsByTopic[topic]) {
+                            eventsByTopic[topic] = [];
+                        }
+                        eventsByTopic[topic].push(log);
+                    });
+                    
+                    log('📁 Event signatures found:');
+                    Object.entries(eventsByTopic).forEach(([topic, logs]) => {
+                        log(`   ${topic}: ${logs.length} events`);
+                    });
+                    
+                    // Show some actual event data
+                    log('🔍 Sample events:');
+                    allLogs.slice(0, 3).forEach((eventLog, i) => {
+                        log(`   Event ${i + 1}:`);
+                        log(`     Block: ${eventLog.blockNumber}`);
+                        log(`     Topics: ${eventLog.topics.join(', ')}`);
+                        log(`     Data: ${eventLog.data}`);
+                    });
+                } else {
+                    log('⚠️ No events found in recent blocks');
+                    
+                    // Try a much larger range
+                    log('🔍 Trying larger block range...');
+                    const largerFromBlock = Math.max(0, currentBlock - 100000);
+                    const largerLogs = await provider.getLogs({
+                        address: VAULT_ADDRESS,
+                        fromBlock: largerFromBlock,
+                        toBlock: currentBlock
+                    });
+                    log(`📊 Found ${largerLogs.length} events in last 100k blocks`);
+                }
+                
+            } catch (error) {
+                log(`❌ Event test failed: ${error.message}`);
+            }
+        }
+    </script>
+</body>
+</html>

@@ -1,0 +1,974 @@
+// Global Application State
+class VaultTracker {
+    constructor() {
+        this.provider = null;
+        this.currentVaultData = null;
+        this.currentTheme = localStorage.getItem('theme') || 'auto';
+        this.charts = {};
+        this.tableData = [];
+        this.filteredData = [];
+        this.currentPage = 1;
+        this.pageSize = 25;
+        
+        // Chain configurations with real RPC endpoints
+        this.chains = {
+            1: { name: 'Ethereum', rpc: 'https://eth.public-rpc.com', explorer: 'https://etherscan.io' },
+            42161: { name: 'Arbitrum', rpc: 'https://arb1.arbitrum.io/rpc', explorer: 'https://arbiscan.io' },
+            8453: { name: 'Base', rpc: 'https://mainnet.base.org', explorer: 'https://basescan.org' },
+            10: { name: 'Optimism', rpc: 'https://mainnet.optimism.io', explorer: 'https://optimistic.etherscan.io' },
+            9745: { name: 'Plasma', rpc: 'https://rpc.plasma.to', explorer: 'https://plasmascan.to' }
+        };
+
+        // ERC-4626 ABI with essential functions and events
+        this.erc4626Abi = [
+            'event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares)',
+            'event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares)',
+            'function asset() view returns (address)',
+            'function totalAssets() view returns (uint256)',
+            'function convertToAssets(uint256 shares) view returns (uint256)',
+            'function decimals() view returns (uint8)',
+            'function symbol() view returns (string)',
+            'function name() view returns (string)',
+            'function totalSupply() view returns (uint256)'
+        ];
+
+        // ERC-20 ABI for asset token info
+        this.erc20Abi = [
+            'function symbol() view returns (string)',
+            'function decimals() view returns (uint8)',
+            'function name() view returns (string)'
+        ];
+
+        this.init();
+    }
+
+    init() {
+        this.setupEventListeners();
+        this.setupTheme();
+        this.updateConnectionStatus('Disconnected', 'info');
+    }
+
+    setupEventListeners() {
+        // Theme toggle
+        document.getElementById('themeToggle').addEventListener('click', () => this.toggleTheme());
+
+        // Example vault buttons
+        document.querySelectorAll('.example-vault').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                const address = e.target.getAttribute('data-address');
+                document.getElementById('vaultAddress').value = address;
+            });
+        });
+
+        // Analyze vault button
+        document.getElementById('analyzeVault').addEventListener('click', () => this.analyzeVault());
+        document.getElementById('retryButton').addEventListener('click', () => this.analyzeVault());
+
+        // Table controls
+        document.getElementById('searchTable').addEventListener('input', (e) => this.filterTable(e.target.value));
+        document.getElementById('pageSize').addEventListener('change', (e) => {
+            this.pageSize = parseInt(e.target.value);
+            this.currentPage = 1;
+            this.renderTable();
+        });
+
+        // Export buttons
+        document.getElementById('exportCSV').addEventListener('click', () => this.exportData('csv'));
+        document.getElementById('exportJSON').addEventListener('click', () => this.exportData('json'));
+
+        // Pagination
+        document.getElementById('prevPage').addEventListener('click', () => this.changePage(-1));
+        document.getElementById('nextPage').addEventListener('click', () => this.changePage(1));
+
+        // Table sorting
+        document.querySelectorAll('th[data-sort]').forEach(th => {
+            th.addEventListener('click', () => this.sortTable(th.getAttribute('data-sort')));
+        });
+    }
+
+    setupTheme() {
+        const applyTheme = (theme) => {
+            if (theme === 'dark' || (theme === 'auto' && window.matchMedia('(prefers-color-scheme: dark)').matches)) {
+                document.documentElement.setAttribute('data-color-scheme', 'dark');
+                document.getElementById('themeToggle').textContent = '☀️';
+            } else {
+                document.documentElement.setAttribute('data-color-scheme', 'light');
+                document.getElementById('themeToggle').textContent = '🌙';
+            }
+        };
+
+        applyTheme(this.currentTheme);
+
+        // Listen for system theme changes
+        window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => {
+            if (this.currentTheme === 'auto') {
+                applyTheme('auto');
+            }
+        });
+    }
+
+    toggleTheme() {
+        const themes = ['auto', 'light', 'dark'];
+        const currentIndex = themes.indexOf(this.currentTheme);
+        this.currentTheme = themes[(currentIndex + 1) % themes.length];
+        localStorage.setItem('theme', this.currentTheme);
+        this.setupTheme();
+    }
+
+    updateConnectionStatus(status, type) {
+        const statusEl = document.getElementById('connectionStatus');
+        statusEl.textContent = status;
+        statusEl.className = `status status--${type}`;
+    }
+
+    // Ethereum address validation
+    isValidAddress(address) {
+        return /^0x[a-fA-F0-9]{40}$/.test(address);
+    }
+
+    // Destroy all existing charts
+    destroyAllCharts() {
+        Object.keys(this.charts).forEach(chartKey => {
+            if (this.charts[chartKey] && typeof this.charts[chartKey].destroy === 'function') {
+                try {
+                    this.charts[chartKey].destroy();
+                } catch (error) {
+                    console.warn(`Error destroying chart ${chartKey}:`, error);
+                }
+                delete this.charts[chartKey];
+            }
+        });
+        this.charts = {};
+    }
+
+    async analyzeVault() {
+        try {
+            this.showLoading();
+            this.hideError();
+            
+            // Destroy any existing charts first
+            this.destroyAllCharts();
+            
+            const vaultAddress = document.getElementById('vaultAddress').value.trim();
+            const chainId = parseInt(document.getElementById('chainSelect').value);
+            
+            if (!vaultAddress || !this.isValidAddress(vaultAddress)) {
+                throw new Error('Please enter a valid vault contract address (42 characters starting with 0x)');
+            }
+
+            this.updateProgress(10, 'Connecting to blockchain network...');
+            await this.connectToChain(chainId);
+            
+            this.updateProgress(30, 'Validating vault contract...');
+            const vaultContract = new ethers.Contract(vaultAddress, this.erc4626Abi, this.provider);
+            
+            // Validate contract exists and is ERC-4626
+            await this.validateVaultContract(vaultContract, vaultAddress);
+            
+            this.updateProgress(50, 'Fetching vault information...');
+            const vaultInfo = await this.getVaultInfo(vaultContract, vaultAddress);
+            
+            this.updateProgress(70, 'Querying deposit and withdrawal events...');
+            const events = await this.fetchVaultEvents(vaultContract);
+            
+            this.updateProgress(85, 'Processing blockchain data...');
+            await this.processRealEventData(vaultInfo, events);
+            
+            this.updateProgress(95, 'Generating visualizations...');
+            this.renderDashboard();
+            
+            this.updateProgress(100, 'Analysis complete!');
+            await this.sleep(500);
+            this.hideLoading();
+            this.showDashboard();
+            
+        } catch (error) {
+            console.error('Analysis error:', error);
+            this.hideLoading();
+            this.showError(error.message);
+        }
+    }
+
+    async connectToChain(chainId) {
+        const chainConfig = this.chains[chainId];
+        if (!chainConfig) {
+            throw new Error('Unsupported blockchain network selected');
+        }
+
+        try {
+            // Connect to the actual RPC endpoint
+            this.provider = new ethers.JsonRpcProvider(chainConfig.rpc);
+            
+            // Test the connection
+            await this.provider.getNetwork();
+            
+            this.updateConnectionStatus(`Connected to ${chainConfig.name}`, 'success');
+            console.log(`Successfully connected to ${chainConfig.name}`);
+            
+        } catch (error) {
+            this.updateConnectionStatus('Connection Failed', 'error');
+            throw new Error(`Failed to connect to ${chainConfig.name}. Please check your internet connection or try a different network.`);
+        }
+    }
+
+    async validateVaultContract(vaultContract, vaultAddress) {
+        try {
+            // Check if contract exists by calling a view function
+            await vaultContract.symbol();
+            await vaultContract.asset();
+            console.log('Contract validated as ERC-4626 vault');
+        } catch (error) {
+            if (error.code === 'CALL_EXCEPTION') {
+                throw new Error(`Contract at ${vaultAddress} is not a valid ERC-4626 vault or does not exist`);
+            }
+            throw new Error(`Failed to validate vault contract: ${error.message}`);
+        }
+    }
+
+    async getVaultInfo(vaultContract, vaultAddress) {
+        try {
+            // Get basic vault information
+            const [name, symbol, decimals, totalAssets, assetAddress, totalSupply] = await Promise.all([
+                vaultContract.name(),
+                vaultContract.symbol(),
+                vaultContract.decimals(),
+                vaultContract.totalAssets(),
+                vaultContract.asset(),
+                vaultContract.totalSupply()
+            ]);
+
+            // Get asset token information
+            let assetSymbol = 'TOKEN';
+            let assetDecimals = 18;
+            try {
+                const assetContract = new ethers.Contract(assetAddress, this.erc20Abi, this.provider);
+                assetSymbol = await assetContract.symbol();
+                assetDecimals = await assetContract.decimals();
+            } catch (error) {
+                console.warn('Could not fetch asset token info:', error.message);
+            }
+
+            return {
+                address: vaultAddress,
+                name,
+                symbol,
+                decimals: Number(decimals),
+                totalAssets: totalAssets.toString(),
+                totalSupply: totalSupply.toString(),
+                assetAddress,
+                assetSymbol,
+                assetDecimals: Number(assetDecimals)
+            };
+        } catch (error) {
+            throw new Error(`Failed to fetch vault information: ${error.message}`);
+        }
+    }
+
+    async fetchVaultEvents(vaultContract) {
+        try {
+            const blockRange = document.getElementById('blockRange').value;
+            let fromBlock = 0;
+            
+            // Determine block range based on selection
+            if (blockRange === '30days') {
+                const currentBlock = await this.provider.getBlockNumber();
+                fromBlock = Math.max(0, currentBlock - (30 * 24 * 60 * 4)); // Approximate 30 days
+            } else if (blockRange === '90days') {
+                const currentBlock = await this.provider.getBlockNumber();
+                fromBlock = Math.max(0, currentBlock - (90 * 24 * 60 * 4)); // Approximate 90 days
+            }
+            
+            console.log(`Querying events from block ${fromBlock}...`);
+
+            // Fetch deposit and withdraw events in parallel
+            const [depositEvents, withdrawEvents] = await Promise.all([
+                vaultContract.queryFilter('Deposit', fromBlock),
+                vaultContract.queryFilter('Withdraw', fromBlock)
+            ]);
+
+            console.log(`Found ${depositEvents.length} deposit events and ${withdrawEvents.length} withdraw events`);
+
+            return { depositEvents, withdrawEvents };
+            
+        } catch (error) {
+            console.error('Error fetching events:', error);
+            // If event querying fails, return empty arrays rather than throwing
+            return { depositEvents: [], withdrawEvents: [] };
+        }
+    }
+
+    async processRealEventData(vaultInfo, events) {
+        const { depositEvents, withdrawEvents } = events;
+        
+        if (depositEvents.length === 0 && withdrawEvents.length === 0) {
+            throw new Error('No deposit or withdrawal events found for this vault. The vault may be new or inactive.');
+        }
+
+        // Process events to calculate net positions per address
+        const addressData = new Map();
+        const assetDecimals = vaultInfo.assetDecimals;
+        const vaultDecimals = vaultInfo.decimals;
+
+        // Process deposit events
+        for (const event of depositEvents) {
+            const { owner, assets, shares } = event.args;
+            const block = await this.provider.getBlock(event.blockNumber);
+            
+            if (!addressData.has(owner)) {
+                addressData.set(owner, {
+                    address: owner,
+                    totalDeposits: BigInt(0),
+                    totalWithdrawals: BigInt(0),
+                    totalShares: BigInt(0),
+                    firstDeposit: new Date(block.timestamp * 1000),
+                    lastActivity: new Date(block.timestamp * 1000),
+                    depositCount: 0,
+                    withdrawalCount: 0
+                });
+            }
+            
+            const data = addressData.get(owner);
+            data.totalDeposits += BigInt(assets);
+            data.totalShares += BigInt(shares);
+            data.depositCount++;
+            
+            const eventDate = new Date(block.timestamp * 1000);
+            if (eventDate < data.firstDeposit) data.firstDeposit = eventDate;
+            if (eventDate > data.lastActivity) data.lastActivity = eventDate;
+        }
+
+        // Process withdrawal events
+        for (const event of withdrawEvents) {
+            const { owner, assets, shares } = event.args;
+            const block = await this.provider.getBlock(event.blockNumber);
+            
+            if (!addressData.has(owner)) {
+                addressData.set(owner, {
+                    address: owner,
+                    totalDeposits: BigInt(0),
+                    totalWithdrawals: BigInt(0),
+                    totalShares: BigInt(0),
+                    firstDeposit: new Date(block.timestamp * 1000),
+                    lastActivity: new Date(block.timestamp * 1000),
+                    depositCount: 0,
+                    withdrawalCount: 0
+                });
+            }
+            
+            const data = addressData.get(owner);
+            data.totalWithdrawals += BigInt(assets);
+            data.totalShares -= BigInt(shares);
+            data.withdrawalCount++;
+            
+            const eventDate = new Date(block.timestamp * 1000);
+            if (eventDate > data.lastActivity) data.lastActivity = eventDate;
+        }
+
+        // Convert to display format and filter
+        const includeWithdrawn = document.getElementById('includeWithdrawn').checked;
+        const minThreshold = parseFloat(document.getElementById('minThreshold').value) || 0;
+        
+        this.tableData = Array.from(addressData.values())
+            .map(data => {
+                const netAssets = data.totalDeposits - data.totalWithdrawals;
+                const netAssetsFormatted = ethers.formatUnits(netAssets, assetDecimals);
+                const netAssetsNum = parseFloat(netAssetsFormatted);
+                const sharesFormatted = ethers.formatUnits(data.totalShares, vaultDecimals);
+                
+                return {
+                    address: data.address,
+                    netDeposit: netAssetsFormatted,
+                    netDepositRaw: netAssets,
+                    shares: sharesFormatted,
+                    sharesRaw: data.totalShares,
+                    usdValue: netAssetsNum, // For sorting/calculations
+                    firstDeposit: data.firstDeposit.toISOString().split('T')[0],
+                    lastActivity: data.lastActivity.toISOString().split('T')[0],
+                    depositCount: data.depositCount,
+                    withdrawalCount: data.withdrawalCount
+                };
+            })
+            .filter(item => {
+                // Filter based on settings
+                if (!includeWithdrawn && item.usdValue <= 0) return false;
+                if (item.usdValue < minThreshold) return false;
+                return true;
+            })
+            .sort((a, b) => b.usdValue - a.usdValue); // Sort by net deposit amount descending
+
+        // Calculate percentages
+        const totalTVL = this.tableData.reduce((sum, item) => sum + Math.max(0, item.usdValue), 0);
+        this.tableData.forEach(item => {
+            item.percentage = totalTVL > 0 ? ((Math.max(0, item.usdValue) / totalTVL) * 100).toFixed(2) : '0.00';
+        });
+
+        if (this.tableData.length === 0) {
+            throw new Error('No active positions found with the current filters. Try adjusting your filters or including withdrawn positions.');
+        }
+
+        // Calculate vault metrics from real data
+        const totalAssetsFormatted = ethers.formatUnits(vaultInfo.totalAssets, assetDecimals);
+        this.currentVaultData = {
+            ...vaultInfo,
+            totalDepositors: this.tableData.length,
+            totalTVL: parseFloat(totalAssetsFormatted),
+            averageDeposit: this.tableData.reduce((sum, item) => sum + Math.max(0, item.usdValue), 0) / this.tableData.length,
+            largestDeposit: this.tableData.length > 0 ? Math.max(...this.tableData.map(item => Math.max(0, item.usdValue))) : 0,
+            tokenSymbol: vaultInfo.assetSymbol
+        };
+        
+        this.filteredData = [...this.tableData];
+        console.log(`Processed ${this.tableData.length} unique depositors with real blockchain data`);
+    }
+
+    renderDashboard() {
+        this.updateKPIs();
+        // Add small delay to ensure DOM is ready
+        setTimeout(() => {
+            this.renderCharts();
+        }, 100);
+        this.renderTable();
+    }
+
+    updateKPIs() {
+        const data = this.currentVaultData;
+        
+        document.getElementById('totalTVL').textContent = `${this.formatNumber(data.totalTVL)} ${data.tokenSymbol}`;
+        document.getElementById('totalTVLTokens').textContent = `${this.formatNumber(data.totalTVL)} ${data.tokenSymbol}`;
+        document.getElementById('totalDepositors').textContent = data.totalDepositors;
+        document.getElementById('activeDepositors').textContent = `${data.totalDepositors} active`;
+        document.getElementById('largestDeposit').textContent = `${this.formatNumber(data.largestDeposit)} ${data.tokenSymbol}`;
+        document.getElementById('largestDepositPercent').textContent = `${((data.largestDeposit / data.totalTVL) * 100).toFixed(1)}%`;
+        document.getElementById('averageDeposit').textContent = `${this.formatNumber(data.averageDeposit)} ${data.tokenSymbol}`;
+        
+        // Calculate median
+        const sortedAmounts = this.tableData.map(item => Math.max(0, item.usdValue)).sort((a, b) => a - b);
+        const median = sortedAmounts.length > 0 ? sortedAmounts[Math.floor(sortedAmounts.length / 2)] : 0;
+        document.getElementById('medianDeposit').textContent = `Median: ${this.formatNumber(median)} ${data.tokenSymbol}`;
+    }
+
+    renderCharts() {
+        try {
+            this.renderPieChart();
+            this.renderTimelineChart();
+            this.renderDistributionChart();
+        } catch (error) {
+            console.error('Error rendering charts:', error);
+        }
+    }
+
+    renderPieChart() {
+        try {
+            const canvas = document.getElementById('pieChart');
+            if (!canvas) return;
+
+            const ctx = canvas.getContext('2d');
+            
+            const topDepositors = this.tableData.filter(item => item.usdValue > 0).slice(0, 10);
+            if (topDepositors.length === 0) return;
+            
+            const otherAmount = this.currentVaultData.totalTVL - topDepositors.reduce((sum, item) => sum + item.usdValue, 0);
+            
+            const labels = [...topDepositors.map(item => this.truncateAddress(item.address)), 'Others'];
+            const data = [...topDepositors.map(item => item.usdValue), Math.max(0, otherAmount)];
+            const colors = ['#1FB8CD', '#FFC185', '#B4413C', '#ECEBD5', '#5D878F', '#DB4545', '#D2BA4C', '#964325', '#944454', '#13343B', '#cccccc'];
+
+            this.charts.pieChart = new Chart(ctx, {
+                type: 'doughnut',
+                data: {
+                    labels,
+                    datasets: [{
+                        data,
+                        backgroundColor: colors,
+                        borderWidth: 2,
+                        borderColor: '#ffffff'
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    plugins: {
+                        legend: {
+                            position: 'bottom',
+                            labels: {
+                                usePointStyle: true,
+                                padding: 15,
+                                font: { size: 12 }
+                            }
+                        },
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => {
+                                    const percentage = ((context.parsed / this.currentVaultData.totalTVL) * 100).toFixed(1);
+                                    return `${context.label}: ${this.formatNumber(context.parsed)} ${this.currentVaultData.tokenSymbol} (${percentage}%)`;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Error rendering pie chart:', error);
+        }
+    }
+
+    renderTimelineChart() {
+        try {
+            const canvas = document.getElementById('timelineChart');
+            if (!canvas) return;
+
+            const ctx = canvas.getContext('2d');
+
+            // Generate cumulative data over time using real first deposit dates
+            const sortedData = [...this.tableData]
+                .filter(item => item.usdValue > 0)
+                .sort((a, b) => new Date(a.firstDeposit) - new Date(b.firstDeposit));
+            
+            if (sortedData.length === 0) return;
+            
+            let cumulative = 0;
+            const timelineData = sortedData.map(item => {
+                cumulative += item.usdValue;
+                return {
+                    x: new Date(item.firstDeposit),
+                    y: cumulative
+                };
+            });
+
+            this.charts.timelineChart = new Chart(ctx, {
+                type: 'line',
+                data: {
+                    datasets: [{
+                        label: `Cumulative Deposits (${this.currentVaultData.tokenSymbol})`,
+                        data: timelineData,
+                        borderColor: '#1FB8CD',
+                        backgroundColor: 'rgba(31, 184, 205, 0.1)',
+                        fill: true,
+                        tension: 0.4,
+                        borderWidth: 3,
+                        pointBackgroundColor: '#1FB8CD',
+                        pointBorderColor: '#ffffff',
+                        pointBorderWidth: 2,
+                        pointRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    interaction: {
+                        intersect: false,
+                        mode: 'index'
+                    },
+                    scales: {
+                        x: {
+                            type: 'time',
+                            time: {
+                                unit: 'month',
+                                displayFormats: {
+                                    month: 'MMM yyyy'
+                                }
+                            },
+                            title: {
+                                display: true,
+                                text: 'Date'
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: `Cumulative Deposits (${this.currentVaultData.tokenSymbol})`
+                            },
+                            ticks: {
+                                callback: (value) => this.formatNumber(value) + ' ' + this.currentVaultData.tokenSymbol
+                            }
+                        }
+                    },
+                    plugins: {
+                        legend: { 
+                            display: true,
+                            position: 'top'
+                        },
+                        tooltip: {
+                            callbacks: {
+                                title: (context) => {
+                                    const date = new Date(context[0].parsed.x);
+                                    return date.toLocaleDateString();
+                                },
+                                label: (context) => `Total: ${this.formatNumber(context.parsed.y)} ${this.currentVaultData.tokenSymbol}`
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Error rendering timeline chart:', error);
+        }
+    }
+
+    renderDistributionChart() {
+        try {
+            const canvas = document.getElementById('distributionChart');
+            if (!canvas) return;
+
+            const ctx = canvas.getContext('2d');
+            
+            const activeData = this.tableData.filter(item => item.usdValue > 0);
+            if (activeData.length === 0) return;
+
+            // Create dynamic distribution bins based on data range
+            const maxAmount = Math.max(...activeData.map(item => item.usdValue));
+            const bins = this.createDynamicBins(maxAmount);
+
+            const distribution = bins.map(bin => ({
+                label: bin.label,
+                count: activeData.filter(item => item.usdValue >= bin.min && item.usdValue < bin.max).length
+            }));
+
+            this.charts.distributionChart = new Chart(ctx, {
+                type: 'bar',
+                data: {
+                    labels: distribution.map(d => d.label),
+                    datasets: [{
+                        label: 'Number of Depositors',
+                        data: distribution.map(d => d.count),
+                        backgroundColor: '#1FB8CD',
+                        borderColor: '#13343B',
+                        borderWidth: 1,
+                        borderRadius: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    scales: {
+                        x: {
+                            title: {
+                                display: true,
+                                text: `Deposit Amount Range (${this.currentVaultData.tokenSymbol})`
+                            }
+                        },
+                        y: {
+                            beginAtZero: true,
+                            title: {
+                                display: true,
+                                text: 'Number of Depositors'
+                            },
+                            ticks: { stepSize: 1 }
+                        }
+                    },
+                    plugins: {
+                        legend: { display: false },
+                        tooltip: {
+                            callbacks: {
+                                label: (context) => `Depositors: ${context.parsed.y}`
+                            }
+                        }
+                    }
+                }
+            });
+        } catch (error) {
+            console.error('Error rendering distribution chart:', error);
+        }
+    }
+
+    createDynamicBins(maxAmount) {
+        if (maxAmount <= 100) {
+            return [
+                { label: '0-10', min: 0, max: 10 },
+                { label: '10-50', min: 10, max: 50 },
+                { label: '50-100', min: 50, max: 100 },
+                { label: '100+', min: 100, max: Infinity }
+            ];
+        } else if (maxAmount <= 10000) {
+            return [
+                { label: '0-100', min: 0, max: 100 },
+                { label: '100-1K', min: 100, max: 1000 },
+                { label: '1K-5K', min: 1000, max: 5000 },
+                { label: '5K-10K', min: 5000, max: 10000 },
+                { label: '10K+', min: 10000, max: Infinity }
+            ];
+        } else {
+            return [
+                { label: '0-1K', min: 0, max: 1000 },
+                { label: '1K-10K', min: 1000, max: 10000 },
+                { label: '10K-100K', min: 10000, max: 100000 },
+                { label: '100K-1M', min: 100000, max: 1000000 },
+                { label: '1M+', min: 1000000, max: Infinity }
+            ];
+        }
+    }
+
+    renderTable() {
+        const tbody = document.getElementById('tableBody');
+        const startIndex = (this.currentPage - 1) * this.pageSize;
+        const endIndex = Math.min(startIndex + this.pageSize, this.filteredData.length);
+        const pageData = this.filteredData.slice(startIndex, endIndex);
+        
+        tbody.innerHTML = pageData.map((item, index) => {
+            const globalRank = startIndex + index + 1;
+            const explorerUrl = this.getExplorerUrl(item.address);
+            const netAmount = parseFloat(item.netDeposit);
+            const tokenSymbol = this.currentVaultData?.tokenSymbol || 'TOKENS';
+            
+            return `
+                <tr>
+                    <td>${globalRank}</td>
+                    <td class="address-cell">
+                        <a href="${explorerUrl}" target="_blank" class="address-link">
+                            ${this.truncateAddress(item.address)}
+                        </a>
+                        <button class="copy-btn" onclick="vaultTracker.copyToClipboard('${item.address}')" title="Copy address">
+                            📋
+                        </button>
+                    </td>
+                    <td class="amount-cell">${this.formatNumber(netAmount)} ${tokenSymbol}</td>
+                    <td class="amount-cell">${this.formatNumber(parseFloat(item.shares))}</td>
+                    <td class="percentage-cell">${item.percentage}%</td>
+                    <td>${item.firstDeposit}</td>
+                    <td>${item.lastActivity}</td>
+                    <td>
+                        <a href="${explorerUrl}" target="_blank" class="btn btn--outline btn--sm">
+                            View
+                        </a>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+        
+        this.updatePagination();
+    }
+
+    getExplorerUrl(address) {
+        const chainId = parseInt(document.getElementById('chainSelect').value);
+        const chain = this.chains[chainId];
+        return `${chain.explorer}/address/${address}`;
+    }
+
+    filterTable(searchTerm) {
+        if (!searchTerm) {
+            this.filteredData = [...this.tableData];
+        } else {
+            this.filteredData = this.tableData.filter(item => 
+                item.address.toLowerCase().includes(searchTerm.toLowerCase())
+            );
+        }
+        this.currentPage = 1;
+        this.renderTable();
+    }
+
+    sortTable(column) {
+        const th = document.querySelector(`th[data-sort="${column}"]`);
+        const currentSort = th.classList.contains('sort-asc') ? 'asc' : 
+                          th.classList.contains('sort-desc') ? 'desc' : 'none';
+        
+        // Remove all sort classes
+        document.querySelectorAll('th[data-sort]').forEach(header => {
+            header.classList.remove('sort-asc', 'sort-desc');
+        });
+        
+        let newSort;
+        if (currentSort === 'none' || currentSort === 'desc') {
+            newSort = 'asc';
+            th.classList.add('sort-asc');
+        } else {
+            newSort = 'desc';
+            th.classList.add('sort-desc');
+        }
+        
+        this.filteredData.sort((a, b) => {
+            let aVal = a[column];
+            let bVal = b[column];
+            
+            // Handle different data types
+            if (column === 'netDeposit' || column === 'shares') {
+                aVal = parseFloat(aVal);
+                bVal = parseFloat(bVal);
+            } else if (column === 'percentage') {
+                aVal = parseFloat(aVal);
+                bVal = parseFloat(bVal);
+            } else if (column === 'firstDeposit' || column === 'lastActivity') {
+                aVal = new Date(aVal);
+                bVal = new Date(bVal);
+            }
+            
+            if (newSort === 'asc') {
+                return aVal > bVal ? 1 : -1;
+            } else {
+                return aVal < bVal ? 1 : -1;
+            }
+        });
+        
+        this.currentPage = 1;
+        this.renderTable();
+    }
+
+    updatePagination() {
+        const totalPages = Math.ceil(this.filteredData.length / this.pageSize);
+        const startIndex = (this.currentPage - 1) * this.pageSize;
+        const endIndex = Math.min(startIndex + this.pageSize, this.filteredData.length);
+        
+        document.getElementById('paginationInfo').textContent = 
+            `Showing ${startIndex + 1} to ${endIndex} of ${this.filteredData.length} entries`;
+        
+        document.getElementById('prevPage').disabled = this.currentPage === 1;
+        document.getElementById('nextPage').disabled = this.currentPage === totalPages;
+        
+        // Generate page numbers
+        const pageNumbers = document.getElementById('pageNumbers');
+        pageNumbers.innerHTML = '';
+        
+        const maxVisiblePages = 5;
+        let startPage = Math.max(1, this.currentPage - Math.floor(maxVisiblePages / 2));
+        let endPage = Math.min(totalPages, startPage + maxVisiblePages - 1);
+        
+        if (endPage - startPage + 1 < maxVisiblePages) {
+            startPage = Math.max(1, endPage - maxVisiblePages + 1);
+        }
+        
+        for (let i = startPage; i <= endPage; i++) {
+            const pageBtn = document.createElement('button');
+            pageBtn.className = `page-number ${i === this.currentPage ? 'active' : ''}`;
+            pageBtn.textContent = i;
+            pageBtn.addEventListener('click', () => this.goToPage(i));
+            pageNumbers.appendChild(pageBtn);
+        }
+    }
+
+    changePage(delta) {
+        const totalPages = Math.ceil(this.filteredData.length / this.pageSize);
+        const newPage = this.currentPage + delta;
+        
+        if (newPage >= 1 && newPage <= totalPages) {
+            this.goToPage(newPage);
+        }
+    }
+
+    goToPage(page) {
+        this.currentPage = page;
+        this.renderTable();
+    }
+
+    exportData(format) {
+        if (format === 'csv') {
+            this.exportCSV();
+        } else if (format === 'json') {
+            this.exportJSON();
+        }
+    }
+
+    exportCSV() {
+        const tokenSymbol = this.currentVaultData?.tokenSymbol || 'TOKENS';
+        const headers = ['Rank', 'Address', `Net Deposit (${tokenSymbol})`, 'Shares', 'Percentage', 'First Deposit', 'Last Activity'];
+        const rows = this.filteredData.map((item, index) => [
+            index + 1,
+            item.address,
+            parseFloat(item.netDeposit).toFixed(6),
+            parseFloat(item.shares).toFixed(6),
+            item.percentage,
+            item.firstDeposit,
+            item.lastActivity
+        ]);
+        
+        const csvContent = [headers, ...rows]
+            .map(row => row.map(field => `"${field}"`).join(','))
+            .join('\n');
+        
+        this.downloadFile(csvContent, 'vault-deposits.csv', 'text/csv');
+    }
+
+    exportJSON() {
+        const jsonData = {
+            vault: this.currentVaultData,
+            exportDate: new Date().toISOString(),
+            totalDepositors: this.filteredData.length,
+            depositors: this.filteredData
+        };
+        
+        this.downloadFile(JSON.stringify(jsonData, null, 2), 'vault-deposits.json', 'application/json');
+    }
+
+    downloadFile(content, filename, mimeType) {
+        const blob = new Blob([content], { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = filename;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        URL.revokeObjectURL(url);
+    }
+
+    copyToClipboard(text) {
+        navigator.clipboard.writeText(text).then(() => {
+            // Show temporary success feedback
+            const btn = event.target;
+            const originalText = btn.textContent;
+            btn.textContent = '✅';
+            setTimeout(() => { btn.textContent = originalText; }, 1000);
+        });
+    }
+
+    truncateAddress(address) {
+        return `${address.slice(0, 6)}...${address.slice(-4)}`;
+    }
+
+    formatNumber(num) {
+        if (isNaN(num)) return '0';
+        if (num >= 1000000) {
+            return (num / 1000000).toFixed(1) + 'M';
+        } else if (num >= 1000) {
+            return (num / 1000).toFixed(1) + 'K';
+        }
+        return Number(num).toLocaleString(undefined, {maximumFractionDigits: 2});
+    }
+
+    showLoading() {
+        document.getElementById('loadingSection').classList.remove('hidden');
+        document.getElementById('analyzeVault').classList.add('loading');
+    }
+
+    hideLoading() {
+        document.getElementById('loadingSection').classList.add('hidden');
+        document.getElementById('analyzeVault').classList.remove('loading');
+    }
+
+    updateProgress(percent, message) {
+        document.getElementById('progressFill').style.width = percent + '%';
+        document.getElementById('progressText').textContent = percent + '% complete';
+        document.getElementById('loadingText').textContent = message;
+    }
+
+    showError(message) {
+        document.getElementById('errorText').textContent = message;
+        document.getElementById('errorSection').classList.remove('hidden');
+    }
+
+    hideError() {
+        document.getElementById('errorSection').classList.add('hidden');
+    }
+
+    showDashboard() {
+        document.getElementById('kpiSection').classList.remove('hidden');
+        document.getElementById('chartsSection').classList.remove('hidden');
+        document.getElementById('tableSection').classList.remove('hidden');
+        
+        // Add fade-in animation
+        [document.getElementById('kpiSection'), 
+         document.getElementById('chartsSection'), 
+         document.getElementById('tableSection')].forEach(section => {
+            section.classList.add('fade-in');
+        });
+    }
+
+    sleep(ms) {
+        return new Promise(resolve => setTimeout(resolve, ms));
+    }
+}
+
+// Initialize the application
+const vaultTracker = new VaultTracker();
+
+// Make it globally available for event handlers
+window.vaultTracker = vaultTracker;

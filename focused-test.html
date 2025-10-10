@@ -1,0 +1,164 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Focused Vault Event Test</title>
+    <script src="https://cdn.jsdelivr.net/npm/ethers@6.8.0/dist/ethers.umd.min.js"></script>
+</head>
+<body>
+    <h1>Focused Vault Event Analysis</h1>
+    <p>Testing the exact ranges suggested by the RPC to see what events this vault actually has.</p>
+    
+    <button onclick="testSuggestedRanges()">Test RPC Suggested Ranges</button>
+    <button onclick="testAllEventTypes()">Test All Event Types</button>
+    <button onclick="testRecentActivity()">Test Very Recent Activity</button>
+    
+    <div id="output" style="margin-top: 20px; padding: 10px; background: #f0f0f0; font-family: monospace; white-space: pre-wrap; max-height: 400px; overflow-y: auto;"></div>
+
+    <script>
+        const output = document.getElementById('output');
+        const log = (message) => {
+            output.textContent += new Date().toLocaleTimeString() + ': ' + message + '\n';
+            console.log(message);
+            output.scrollTop = output.scrollHeight;
+        };
+
+        const PLASMA_RPC = 'https://rpc.plasma.to';
+        const VAULT_ADDRESS = '0x527295f09Ff7c411B213B29a0DE8c816a669b3fe';
+
+        async function testSuggestedRanges() {
+            log('🎯 Testing RPC suggested ranges from earlier errors...');
+            
+            const provider = new ethers.JsonRpcProvider(PLASMA_RPC);
+            const suggestedRanges = [
+                { start: 3156246, end: 3157384 }, // 1,138 blocks
+                { start: 3161246, end: 3161894 }, // 648 blocks
+                { start: 3166246, end: 3166814 }, // 568 blocks
+                { start: 3171246, end: 3171758 }, // 512 blocks
+                { start: 3176246, end: 3176801 }  // 555 blocks
+            ];
+
+            for (const range of suggestedRanges) {
+                try {
+                    log(`  Testing range ${range.start} to ${range.end} (${range.end - range.start + 1} blocks)...`);
+                    
+                    const logs = await provider.getLogs({
+                        address: VAULT_ADDRESS,
+                        fromBlock: range.start,
+                        toBlock: range.end
+                    });
+                    
+                    log(`    ✅ Found ${logs.length} total events in this range`);
+                    
+                    if (logs.length > 0) {
+                        // Show event signatures
+                        const signatures = new Set();
+                        logs.forEach(log => signatures.add(log.topics[0]));
+                        
+                        log(`    📝 Unique event signatures:`);
+                        signatures.forEach(sig => log(`      - ${sig}`));
+                        
+                        // Show a few sample events
+                        log(`    🔍 Sample events (first 3):`);
+                        logs.slice(0, 3).forEach((eventLog, i) => {
+                            log(`      Event ${i + 1}: Block ${eventLog.blockNumber}, Topics: ${eventLog.topics.length}, Data: ${eventLog.data.substring(0, 20)}...`);
+                        });
+                    }
+                    
+                } catch (error) {
+                    log(`    ❌ Range ${range.start}-${range.end} failed: ${error.message}`);
+                }
+                
+                // Small delay
+                await new Promise(resolve => setTimeout(resolve, 500));
+            }
+        }
+
+        async function testAllEventTypes() {
+            log('🧪 Testing different event types in a small recent range...');
+            
+            const provider = new ethers.JsonRpcProvider(PLASMA_RPC);
+            const currentBlock = await provider.getBlockNumber();
+            const fromBlock = currentBlock - 500; // Very small range
+            
+            const contract = new ethers.Contract(VAULT_ADDRESS, [
+                'event Transfer(address indexed from, address indexed to, uint256 value)',
+                'event Approval(address indexed owner, address indexed spender, uint256 value)',
+                'event Deposit(address indexed sender, address indexed owner, uint256 assets, uint256 shares)',
+                'event Withdraw(address indexed sender, address indexed receiver, address indexed owner, uint256 assets, uint256 shares)',
+                // Some other possible events
+                'event Mint(address indexed to, uint256 amount)',
+                'event Burn(address indexed from, uint256 amount)',
+                'event PositionUpdate(address indexed user, uint256 amount)',
+                'event VaultUpdate(uint256 totalAssets, uint256 totalShares)'
+            ], provider);
+
+            const eventTypes = ['Transfer', 'Approval', 'Deposit', 'Withdraw', 'Mint', 'Burn'];
+            
+            log(`  Testing events in blocks ${fromBlock} to ${currentBlock}...`);
+            
+            for (const eventType of eventTypes) {
+                try {
+                    const events = await contract.queryFilter(eventType, fromBlock, currentBlock);
+                    log(`    ${eventType}: ${events.length} events`);
+                } catch (error) {
+                    log(`    ${eventType}: Query failed - ${error.message.substring(0, 100)}...`);
+                }
+            }
+        }
+
+        async function testRecentActivity() {
+            log('📊 Looking for ANY recent activity patterns...');
+            
+            const provider = new ethers.JsonRpcProvider(PLASMA_RPC);
+            const currentBlock = await provider.getBlockNumber();
+            
+            // Test multiple tiny ranges
+            for (let i = 0; i < 10; i++) {
+                const toBlock = currentBlock - (i * 100);
+                const fromBlock = toBlock - 100;
+                
+                try {
+                    const logs = await provider.getLogs({
+                        address: VAULT_ADDRESS,
+                        fromBlock: fromBlock,
+                        toBlock: toBlock
+                    });
+                    
+                    if (logs.length > 0) {
+                        log(`  📍 Found ${logs.length} events in blocks ${fromBlock}-${toBlock}`);
+                        
+                        // Analyze the events found
+                        const eventCounts = {};
+                        logs.forEach(eventLog => {
+                            const signature = eventLog.topics[0];
+                            eventCounts[signature] = (eventCounts[signature] || 0) + 1;
+                        });
+                        
+                        Object.entries(eventCounts).forEach(([sig, count]) => {
+                            log(`    ${sig}: ${count} events`);
+                        });
+                        
+                        break; // Stop when we find some activity
+                    } else {
+                        log(`  ⚪ No events in blocks ${fromBlock}-${toBlock}`);
+                    }
+                } catch (error) {
+                    log(`  ❌ Failed blocks ${fromBlock}-${toBlock}: ${error.message}`);
+                }
+                
+                await new Promise(resolve => setTimeout(resolve, 200));
+            }
+        }
+        
+        // Known event signature mappings
+        const KNOWN_SIGNATURES = {
+            '0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef': 'Transfer(address,address,uint256)',
+            '0x8c5be1e5ebec7d5bd14f71427d1e84f3dd0314c0f7b2291e5b200ac8c7c3b925': 'Approval(address,address,uint256)',
+            '0xdcbc1c05240f31ff3ad067ef1ee35ce4997762752e3a095284754544f4c709d7': 'Deposit(address,address,uint256,uint256)',
+            '0xfbde797d201c681b91056529119e0b02407c7bb96a4a2c75c01fc9667232c8db': 'Withdraw(address,address,address,uint256,uint256)'
+        };
+    </script>
+</body>
+</html>
