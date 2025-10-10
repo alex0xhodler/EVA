@@ -52,3 +52,9 @@ Thumbs.db
 
 # Console export logs
 console-export-*.log
+
+# Vercel local project files
+.vercel/
+
+# Local env variants
+.env.local
