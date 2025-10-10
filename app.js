@@ -1284,7 +1284,6 @@ class VaultTracker {
             return { depositEvents: [], withdrawEvents: [] };
         }
     }
-    }
 
     // Chunked scan using provider.getLogs to robustly collect Deposit/Withdraw/Transfer
     async scanByChunksWithTopics(vaultContract, fromBlock, toBlock) {
