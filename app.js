@@ -192,6 +192,8 @@ class VaultTracker {
             // Alternative event signatures that some vaults might use
             'event DepositMade(address indexed user, uint256 amount, uint256 shares)',
             'event WithdrawalMade(address indexed user, uint256 amount, uint256 shares)',
+            // Common auxiliary events seen on Plasma vaults
+            'event VaultUpdate(uint256 totalAssets, uint256 totalShares)',
             'event Transfer(address indexed from, address indexed to, uint256 value)',
             'function asset() view returns (address)',
             'function totalAssets() view returns (uint256)',
@@ -212,6 +214,9 @@ class VaultTracker {
         ];
 
         this.init();
+
+        // Cache for block timestamps to avoid excessive RPC calls
+        this.blockTimestampCache = new Map();
     }
 
     init() {
@@ -497,91 +502,39 @@ class VaultTracker {
             const blockRange = document.getElementById('blockRange').value;
             let fromBlock = 0;
             const currentBlock = await this.provider.getBlockNumber();
-            
+
             console.log(`Current block number: ${currentBlock}`);
-            
+
             // Determine block range based on selection, with RPC limits in mind
             const maxBlockRange = 9000; // Stay under 10k limit for Plasma RPC
-            
+
             if (blockRange === '30days') {
                 const idealRange = 30 * 24 * 60 * 4; // Approximate 30 days
                 fromBlock = Math.max(0, currentBlock - Math.min(idealRange, maxBlockRange));
             } else if (blockRange === '90days') {
-                const idealRange = 90 * 24 * 60 * 4; // Approximate 90 days  
+                const idealRange = 90 * 24 * 60 * 4; // Approximate 90 days
                 fromBlock = Math.max(0, currentBlock - Math.min(idealRange, maxBlockRange));
             } else {
                 // For "deployment", use maximum allowed range
                 fromBlock = Math.max(0, currentBlock - maxBlockRange);
             }
-            
-            console.log(`Querying events from block ${fromBlock} to ${currentBlock} (range: ${currentBlock - fromBlock} blocks)`);
 
-            // Try different approaches to fetch events
-            let depositEvents = [];
-            let withdrawEvents = [];
-            
-            // First, let's try to discover what events this contract actually emits
-            await this.discoverContractEvents(vaultContract, currentBlock);
-            
-            try {
-                console.log('Attempting to fetch Deposit events...');
-                depositEvents = await vaultContract.queryFilter('Deposit', fromBlock, currentBlock);
-                console.log(`✅ Found ${depositEvents.length} deposit events`);
-            } catch (error) {
-                console.warn('⚠️ Failed to fetch Deposit events:', error.message);
-                
-                // Try alternative event names
-                try {
-                    console.log('Trying DepositMade events...');
-                    depositEvents = await vaultContract.queryFilter('DepositMade', fromBlock, currentBlock);
-                    console.log(`✅ Found ${depositEvents.length} DepositMade events`);
-                } catch (altError) {
-                    console.warn('⚠️ Failed to fetch DepositMade events:', altError.message);
-                    
-                    // Try with a much smaller block range to avoid RPC limits
-                    const recentFromBlock = Math.max(0, currentBlock - 5000); // Stay well under 10k limit
-                    console.log(`Retrying Deposit events with smaller range: ${recentFromBlock} to ${currentBlock}`);
-                    try {
-                        depositEvents = await vaultContract.queryFilter('Deposit', recentFromBlock, currentBlock);
-                        console.log(`✅ Found ${depositEvents.length} deposit events in recent range`);
-                    } catch (retryError) {
-                        console.error('❌ Failed to fetch Deposit events even with smaller range:', retryError.message);
-                    }
-                }
-            }
-            
-            try {
-                console.log('Attempting to fetch Withdraw events...');
-                withdrawEvents = await vaultContract.queryFilter('Withdraw', fromBlock, currentBlock);
-                console.log(`✅ Found ${withdrawEvents.length} withdraw events`);
-            } catch (error) {
-                console.warn('⚠️ Failed to fetch Withdraw events:', error.message);
-                // Try with a much smaller block range to avoid RPC limits
-                const recentFromBlock = Math.max(0, currentBlock - 5000); // Stay well under 10k limit
-                console.log(`Retrying Withdraw events with smaller range: ${recentFromBlock} to ${currentBlock}`);
-                try {
-                    withdrawEvents = await vaultContract.queryFilter('Withdraw', recentFromBlock, currentBlock);
-                    console.log(`✅ Found ${withdrawEvents.length} withdraw events in recent range`);
-                } catch (retryError) {
-                    console.error('❌ Failed to fetch Withdraw events even with smaller range:', retryError.message);
-                }
-            }
+            console.log(`Querying events (chunked) from block ${fromBlock} to ${currentBlock} (range: ${currentBlock - fromBlock} blocks)`);
 
-            console.log(`📊 Final results: ${depositEvents.length} deposits, ${withdrawEvents.length} withdrawals`);
-            
-            // If we still haven't found events, try scanning in chunks
+            // Always prefer chunked scanning with topics to handle RPC quirks and non-standard events
+            const { depositEvents, withdrawEvents } = await this.scanByChunksWithTopics(vaultContract, fromBlock, currentBlock);
+            console.log(`📊 Final results (chunked): ${depositEvents.length} deposits, ${withdrawEvents.length} withdrawals`);
+
+            // If nothing found, fall back to broader discovery scan
             if (depositEvents.length === 0 && withdrawEvents.length === 0) {
-                console.log('🔍 No standard events found, trying comprehensive scan...');
+                console.log('🔍 No events found via chunked scan, attempting discovery-based scan...');
                 const chunkResults = await this.scanInChunks(vaultContract, currentBlock);
-                depositEvents = chunkResults.depositEvents;
-                withdrawEvents = chunkResults.withdrawEvents;
+                return chunkResults;
             }
-            
+
             return { depositEvents, withdrawEvents };
-            
         } catch (error) {
             console.error('❌ Critical error fetching events:', error);
-            // If event querying fails completely, return empty arrays rather than throwing
             return { depositEvents: [], withdrawEvents: [] };
         }
     }
@@ -602,7 +555,7 @@ class VaultTracker {
         console.log(`📊 Processing ${depositEvents.length} deposit events...`);
         for (const event of depositEvents) {
             const { owner, assets, shares } = event.args;
-            const block = await this.provider.getBlock(event.blockNumber);
+            const blockTime = await this.getBlockTimestamp(event.blockNumber);
             
             console.log(`  Deposit: ${owner} - Assets: ${assets.toString()} - Shares: ${shares.toString()}`);
             
@@ -613,8 +566,8 @@ class VaultTracker {
                     totalDeposits: BigInt(0),
                     totalWithdrawals: BigInt(0),
                     totalShares: BigInt(0),
-                    firstDeposit: new Date(block.timestamp * 1000),
-                    lastActivity: new Date(block.timestamp * 1000),
+                    firstDeposit: new Date(blockTime * 1000),
+                    lastActivity: new Date(blockTime * 1000),
                     depositCount: 0,
                     withdrawalCount: 0
                 });
@@ -625,7 +578,7 @@ class VaultTracker {
             data.totalShares += BigInt(shares);
             data.depositCount++;
             
-            const eventDate = new Date(block.timestamp * 1000);
+            const eventDate = new Date(blockTime * 1000);
             if (eventDate < data.firstDeposit) data.firstDeposit = eventDate;
             if (eventDate > data.lastActivity) data.lastActivity = eventDate;
         }
@@ -634,7 +587,7 @@ class VaultTracker {
         console.log(`📊 Processing ${withdrawEvents.length} withdrawal events...`);
         for (const event of withdrawEvents) {
             const { owner, assets, shares } = event.args;
-            const block = await this.provider.getBlock(event.blockNumber);
+            const blockTime = await this.getBlockTimestamp(event.blockNumber);
             
             console.log(`  Withdrawal: ${owner} - Assets: ${assets.toString()} - Shares: ${shares.toString()}`);
             
@@ -644,8 +597,8 @@ class VaultTracker {
                     totalDeposits: BigInt(0),
                     totalWithdrawals: BigInt(0),
                     totalShares: BigInt(0),
-                    firstDeposit: new Date(block.timestamp * 1000),
-                    lastActivity: new Date(block.timestamp * 1000),
+                    firstDeposit: new Date(blockTime * 1000),
+                    lastActivity: new Date(blockTime * 1000),
                     depositCount: 0,
                     withdrawalCount: 0
                 });
@@ -656,7 +609,7 @@ class VaultTracker {
             data.totalShares -= BigInt(shares);
             data.withdrawalCount++;
             
-            const eventDate = new Date(block.timestamp * 1000);
+            const eventDate = new Date(blockTime * 1000);
             if (eventDate > data.lastActivity) data.lastActivity = eventDate;
         }
 
@@ -1271,101 +1224,136 @@ class VaultTracker {
     async scanInChunks(vaultContract, currentBlock) {
         console.log('🕵️ Starting comprehensive chunk-based event scan...');
         console.log('📊 This vault is VERY active - using Transfer events to track deposits/withdrawals');
-        
+
         let allTransferEvents = [];
         let allDepositEvents = [];
         let allWithdrawEvents = [];
-        
+
         try {
-            // Get the vault address from the contract or use the stored address
             const vaultAddress = vaultContract.target || vaultContract.address || document.getElementById('vaultAddress').value.trim();
-            
+
             // First try to discover active blocks programmatically
             const discoveredRanges = await this.discoverActiveBlocks(vaultAddress);
-            
-            // Fallback to known ranges if discovery fails or finds nothing
-            const knownActiveRanges = [
-                { start: 3168134, end: 3168200 }, // Recent activity
-                { start: 3167762, end: 3167800 },
-                { start: 3162227, end: 3162300 },
-                { start: 3158636, end: 3158700 },
-                { start: 3158449, end: 3158500 },
-                { start: 3143015, end: 3143100 },
-                { start: 3142939, end: 3143000 },
-                { start: 3099445, end: 3099500 },
-                { start: 3098658, end: 3098700 },
-                { start: 3098135, end: 3098200 }
-            ];
-            
-            // Use discovered ranges if available, otherwise fallback
-            const rangesToScan = discoveredRanges.length > 0 ? discoveredRanges : knownActiveRanges;
-            
-            console.log(`🎯 Scanning ${discoveredRanges.length > 0 ? 'discovered' : 'known'} active block ranges...`);
-            
+
+            // Fallback to a small recent range if discovery finds nothing
+            const fallbackRange = { start: Math.max(0, currentBlock - 5000), end: currentBlock };
+            const rangesToScan = discoveredRanges.length > 0 ? discoveredRanges : [fallbackRange];
+
+            console.log(`🎯 Scanning ${discoveredRanges.length > 0 ? 'discovered' : 'recent'} active block ranges...`);
+
             for (const range of rangesToScan) {
                 const fromBlock = range.start;
                 const toBlock = range.end;
-                
+
                 console.log(`  Scanning range: blocks ${fromBlock} to ${toBlock}`);
-                
+
                 try {
-                    // Try all event types in this known active range
-                    const [depositEvents, withdrawEvents, transferEvents] = await Promise.all([
-                        vaultContract.queryFilter('Deposit', fromBlock, toBlock),
-                        vaultContract.queryFilter('Withdraw', fromBlock, toBlock),
-                        vaultContract.queryFilter('Transfer', fromBlock, toBlock)
-                    ]);
-                    
+                    const { depositEvents, withdrawEvents, transferEvents } = await this.scanByChunksWithTopics(vaultContract, fromBlock, toBlock);
+
                     console.log(`  📊 Found ${depositEvents.length} deposits, ${withdrawEvents.length} withdraws, ${transferEvents.length} transfers`);
-                    
-                    if (depositEvents.length > 0 || withdrawEvents.length > 0) {
-                        // If we found standard ERC-4626 events, use those
-                        allDepositEvents = (allDepositEvents || []).concat(depositEvents);
-                        allWithdrawEvents = (allWithdrawEvents || []).concat(withdrawEvents);
-                        console.log(`  🎉 Found standard ERC-4626 events in this range!`);
-                    } else if (transferEvents.length > 0) {
-                        // Otherwise, use transfer events
-                        allTransferEvents = allTransferEvents.concat(transferEvents);
-                        console.log(`  ✅ Found Transfer events to analyze`);
-                    }
-                    
+
+                    if (depositEvents.length > 0) allDepositEvents = allDepositEvents.concat(depositEvents);
+                    if (withdrawEvents.length > 0) allWithdrawEvents = allWithdrawEvents.concat(withdrawEvents);
+                    if (transferEvents.length > 0) allTransferEvents = allTransferEvents.concat(transferEvents);
                 } catch (chunkError) {
                     console.warn(`  ⚠️ Failed to scan range ${fromBlock}-${toBlock}: ${chunkError.message}`);
                 }
-                
+
                 // Add delay to avoid overwhelming the RPC
                 await this.sleep(200);
-                
-                // Stop if we've found enough events to analyze
-                if (allDepositEvents.length + allWithdrawEvents.length + allTransferEvents.length > 100) {
+
+                // Stop if we've accumulated enough events
+                if (allDepositEvents.length + allWithdrawEvents.length + allTransferEvents.length > 300) {
                     console.log(`  ℹ️ Found sufficient events for analysis, stopping scan`);
                     break;
                 }
             }
-            
+
             console.log(`🎆 Scan complete: ${allDepositEvents.length} deposits, ${allWithdrawEvents.length} withdraws, ${allTransferEvents.length} transfers`);
-            
-            // If we found standard ERC-4626 events, use those directly
+
             if (allDepositEvents.length > 0 || allWithdrawEvents.length > 0) {
-                console.log(`✅ Using standard ERC-4626 events`);
                 return { depositEvents: allDepositEvents, withdrawEvents: allWithdrawEvents };
-            }
-            // Otherwise, convert Transfer events to deposit/withdraw format
-            else if (allTransferEvents.length > 0) {
+            } else if (allTransferEvents.length > 0) {
                 console.log(`🔄 Converting ${allTransferEvents.length} Transfer events to deposit/withdraw format`);
-                const processedEvents = this.processTransferEvents(allTransferEvents, vaultContract.address);
-                return processedEvents;
-            }
-            // No events found
-            else {
-                console.log(`⚠️ No events found in known active ranges`);
+                return this.processTransferEvents(allTransferEvents, vaultContract.address);
+            } else {
                 return { depositEvents: [], withdrawEvents: [] };
             }
-            
         } catch (error) {
             console.error('❌ Chunk scanning failed:', error.message);
             return { depositEvents: [], withdrawEvents: [] };
         }
+    }
+    }
+
+    // Chunked scan using provider.getLogs to robustly collect Deposit/Withdraw/Transfer
+    async scanByChunksWithTopics(vaultContract, fromBlock, toBlock) {
+        const iface = new ethers.Interface(this.erc4626Abi);
+        const depositTopic = iface.getEvent('Deposit').topicHash;
+        const withdrawTopic = iface.getEvent('Withdraw').topicHash;
+        const transferTopic = iface.getEvent('Transfer').topicHash;
+        // Some vaults emit VaultUpdate; we ignore for accounting but use for activity signals
+        let vaultUpdateTopic;
+        try { vaultUpdateTopic = iface.getEvent('VaultUpdate').topicHash; } catch (_) { vaultUpdateTopic = null; }
+
+        const address = vaultContract.target || vaultContract.address;
+        const chunkSize = 2000; // Small chunks for Plasma RPC
+
+        const depositEvents = [];
+        const withdrawEvents = [];
+        const transferEvents = [];
+
+        for (let start = fromBlock; start <= toBlock; start += chunkSize) {
+            const end = Math.min(start + chunkSize - 1, toBlock);
+            const topicsOr = [depositTopic, withdrawTopic, transferTopic].filter(Boolean);
+            const topics0 = vaultUpdateTopic ? [...topicsOr, vaultUpdateTopic] : topicsOr;
+
+            const filter = {
+                address,
+                fromBlock: start,
+                toBlock: end,
+                topics: [topics0]
+            };
+
+            let logs = [];
+            try {
+                logs = await this.provider.getLogs(filter);
+            } catch (e) {
+                // On range errors, split once
+                if (end - start > 500) {
+                    const mid = Math.floor((start + end) / 2);
+                    const first = await this.provider.getLogs({ address, fromBlock: start, toBlock: mid, topics: [topics0] }).catch(() => []);
+                    const second = await this.provider.getLogs({ address, fromBlock: mid + 1, toBlock: end, topics: [topics0] }).catch(() => []);
+                    logs = first.concat(second);
+                } else {
+                    console.warn(`  ⚠️ getLogs failed for ${start}-${end}: ${e.message}`);
+                    continue;
+                }
+            }
+
+            for (const log of logs) {
+                try {
+                    const parsed = iface.parseLog({ topics: log.topics, data: log.data });
+                    if (parsed.name === 'Deposit' || parsed.name === 'DepositMade') {
+                        depositEvents.push({ ...log, args: parsed.args });
+                    } else if (parsed.name === 'Withdraw' || parsed.name === 'WithdrawalMade') {
+                        withdrawEvents.push({ ...log, args: parsed.args });
+                    } else if (parsed.name === 'Transfer') {
+                        transferEvents.push({ ...log, args: parsed.args });
+                    } else if (parsed.name === 'VaultUpdate') {
+                        // Ignored for accounting; useful to confirm activity
+                    }
+                } catch (e) {
+                    // Unknown event; ignore
+                }
+            }
+
+            // Small pacing delay
+            await this.sleep(100);
+        }
+
+        // If standard events are missing, we may still convert transfers later
+        return { depositEvents, withdrawEvents, transferEvents };
     }
 
     processTransferEvents(transferEvents, vaultAddress) {
@@ -1500,6 +1488,14 @@ class VaultTracker {
 
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async getBlockTimestamp(blockNumber) {
+        if (this.blockTimestampCache.has(blockNumber)) return this.blockTimestampCache.get(blockNumber);
+        const blk = await this.provider.getBlock(blockNumber);
+        const ts = blk?.timestamp || Math.floor(Date.now() / 1000);
+        this.blockTimestampCache.set(blockNumber, ts);
+        return ts;
     }
 }
 
