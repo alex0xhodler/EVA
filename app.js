@@ -655,8 +655,9 @@ class VaultTracker {
                     console.log(`  ❌ Filtered out ${item.address} (net <= 0, includeWithdrawn=false)`);
                     return false;
                 }
-                if (item.usdValue < minThreshold) {
-                    console.log(`  ❌ Filtered out ${item.address} (below threshold: ${item.usdValue})`);
+                // Apply threshold only to positive net positions; keep negatives when includeWithdrawn=true
+                if (item.usdValue > 0 && item.usdValue < minThreshold) {
+                    console.log(`  ❌ Filtered out ${item.address} (positive net below threshold: ${item.usdValue})`);
                     return false;
                 }
                 console.log(`  ✅ Keeping ${item.address} (net: ${item.usdValue})`);
