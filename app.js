@@ -522,10 +522,19 @@ class VaultTracker {
             console.log(`Querying events (chunked) from block ${fromBlock} to ${currentBlock} (range: ${currentBlock - fromBlock} blocks)`);
 
             // Always prefer chunked scanning with topics to handle RPC quirks and non-standard events
-            const { depositEvents, withdrawEvents } = await this.scanByChunksWithTopics(vaultContract, fromBlock, currentBlock);
-            console.log(`📊 Final results (chunked): ${depositEvents.length} deposits, ${withdrawEvents.length} withdrawals`);
+            const chunked = await this.scanByChunksWithTopics(vaultContract, fromBlock, currentBlock);
+            let { depositEvents, withdrawEvents, transferEvents } = chunked;
+            console.log(`📊 Final results (chunked): ${depositEvents.length} deposits, ${withdrawEvents.length} withdrawals, ${transferEvents.length} transfers`);
 
-            // If nothing found, fall back to broader discovery scan
+            // If no standard events but we have transfers, convert immediately
+            if (depositEvents.length === 0 && withdrawEvents.length === 0 && transferEvents.length > 0) {
+                console.log('🔄 No Deposit/Withdraw found, converting Transfer mint/burn to deposits/withdrawals');
+                const converted = this.processTransferEvents(transferEvents, vaultContract.address);
+                depositEvents = converted.depositEvents;
+                withdrawEvents = converted.withdrawEvents;
+            }
+
+            // If still nothing, fall back to broader discovery scan
             if (depositEvents.length === 0 && withdrawEvents.length === 0) {
                 console.log('🔍 No events found via chunked scan, attempting discovery-based scan...');
                 const chunkResults = await this.scanInChunks(vaultContract, currentBlock);
