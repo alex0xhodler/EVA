@@ -432,26 +432,46 @@ class VaultTracker {
         try {
             console.log(`🔍 Validating contract at ${vaultAddress}...`);
             
-            // Check if contract exists by calling basic view functions
-            const symbol = await vaultContract.symbol();
-            const asset = await vaultContract.asset();
+            let symbol = 'UNKNOWN';
+            let asset = 'UNKNOWN';
+            let validationPassed = false;
             
-            console.log(`✅ Contract validation successful:`);
-            console.log(`  - Symbol: ${symbol}`);
-            console.log(`  - Asset: ${asset}`);
-            
-            // Try to get additional info to confirm it's working
+            // Try symbol() - some contracts may not implement this
             try {
-                const totalAssets = await vaultContract.totalAssets();
-                console.log(`  - Total Assets: ${totalAssets.toString()}`);
+                symbol = await vaultContract.symbol();
+                console.log(`  - Symbol: ${symbol}`);
             } catch (err) {
-                console.warn('  ⚠️ Could not fetch totalAssets:', err.message);
+                console.warn('  ⚠️ Could not fetch symbol:', err.message);
             }
             
-            console.log('🎉 Contract validated as ERC-4626 vault');
+            // Try asset() - core ERC-4626 method
+            try {
+                asset = await vaultContract.asset();
+                console.log(`  - Asset: ${asset}`);
+                validationPassed = true;
+            } catch (err) {
+                console.warn('  ⚠️ Could not fetch asset:', err.message);
+            }
+            
+            // If asset() failed, try totalAssets() as fallback
+            if (!validationPassed) {
+                try {
+                    const totalAssets = await vaultContract.totalAssets();
+                    console.log(`  - Total Assets: ${totalAssets.toString()}`);
+                    validationPassed = true;
+                } catch (err) {
+                    console.warn('  ⚠️ Could not fetch totalAssets:', err.message);
+                }
+            }
+            
+            if (!validationPassed) {
+                throw new Error('Contract does not implement basic ERC-4626 methods (asset() or totalAssets())');
+            }
+            
+            console.log('✅ Contract validation successful (basic vault functionality detected)');
         } catch (error) {
             console.error('❌ Contract validation failed:', error);
-            if (error.code === 'CALL_EXCEPTION') {
+            if (error.code === 'CALL_EXCEPTION' || error.code === 'BAD_DATA') {
                 throw new Error(`Contract at ${vaultAddress} is not a valid ERC-4626 vault or does not exist on this network`);
             }
             throw new Error(`Failed to validate vault contract: ${error.message}`);
@@ -460,25 +480,33 @@ class VaultTracker {
 
     async getVaultInfo(vaultContract, vaultAddress) {
         try {
-            // Get basic vault information
-            const [name, symbol, decimals, totalAssets, assetAddress, totalSupply] = await Promise.all([
-                vaultContract.name(),
-                vaultContract.symbol(),
-                vaultContract.decimals(),
-                vaultContract.totalAssets(),
-                vaultContract.asset(),
-                vaultContract.totalSupply()
-            ]);
-
+            // Get basic vault information with fallbacks for non-standard contracts
+            let name = 'UNKNOWN_VAULT';
+            let symbol = 'UNKNOWN';
+            let decimals = 18;
+            let totalAssets = '0';
+            let assetAddress = ethers.ZeroAddress;
+            let totalSupply = '0';
+            
+            // Try each method individually with fallbacks
+            try { name = await vaultContract.name(); } catch (e) { console.warn('Could not fetch name:', e.message); }
+            try { symbol = await vaultContract.symbol(); } catch (e) { console.warn('Could not fetch symbol:', e.message); }
+            try { decimals = await vaultContract.decimals(); } catch (e) { console.warn('Could not fetch decimals:', e.message); }
+            try { totalAssets = (await vaultContract.totalAssets()).toString(); } catch (e) { console.warn('Could not fetch totalAssets:', e.message); }
+            try { assetAddress = await vaultContract.asset(); } catch (e) { console.warn('Could not fetch asset:', e.message); }
+            try { totalSupply = (await vaultContract.totalSupply()).toString(); } catch (e) { console.warn('Could not fetch totalSupply:', e.message); }
+            
             // Get asset token information
             let assetSymbol = 'TOKEN';
             let assetDecimals = 18;
-            try {
-                const assetContract = new ethers.Contract(assetAddress, this.erc20Abi, this.provider);
-                assetSymbol = await assetContract.symbol();
-                assetDecimals = await assetContract.decimals();
-            } catch (error) {
-                console.warn('Could not fetch asset token info:', error.message);
+            if (assetAddress !== ethers.ZeroAddress) {
+                try {
+                    const assetContract = new ethers.Contract(assetAddress, this.erc20Abi, this.provider);
+                    assetSymbol = await assetContract.symbol();
+                    assetDecimals = await assetContract.decimals();
+                } catch (error) {
+                    console.warn('Could not fetch asset token info:', error.message);
+                }
             }
 
             return {
@@ -486,8 +514,8 @@ class VaultTracker {
                 name,
                 symbol,
                 decimals: Number(decimals),
-                totalAssets: totalAssets.toString(),
-                totalSupply: totalSupply.toString(),
+                totalAssets,
+                totalSupply,
                 assetAddress,
                 assetSymbol,
                 assetDecimals: Number(assetDecimals)
