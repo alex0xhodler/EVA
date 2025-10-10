@@ -1537,50 +1537,84 @@ class VaultTracker {
     }
 
     async expandHistoricalScan(vaultContract, recentFromBlock) {
-        console.log('🕰️ Expanding historical scan to find earlier deposits...');
-        const currentBlock = await this.provider.getBlockNumber();
+        console.log('🕰️ Expanding historical scan using smart block discovery...');
+        const vaultAddress = vaultContract.target || vaultContract.address;
         
-        // Scan in larger chunks going backwards from our recent scan start
-        const chunkSize = 20000; // Larger chunks for historical data
-        const maxHistoricalBlocks = 200000; // Don't go too far back
-        let depositEvents = [];
-        
-        const scanStart = Math.max(0, recentFromBlock - maxHistoricalBlocks);
-        const scanEnd = recentFromBlock;
-        
-        console.log(`📊 Historical range: blocks ${scanStart} to ${scanEnd} (${scanEnd - scanStart} blocks)`);
-        
-        for (let start = scanStart; start < scanEnd && depositEvents.length < 50; start += chunkSize) {
-            const end = Math.min(start + chunkSize - 1, scanEnd);
+        try {
+            // Use VaultBlockDiscovery to find active blocks efficiently
+            const discovery = new VaultBlockDiscovery(this.provider, vaultAddress);
+            const maxHistoricalBlocks = 500000; // Expand search range since discovery is efficient
+            const scanStart = Math.max(0, recentFromBlock - maxHistoricalBlocks);
             
-            console.log(`  Scanning historical chunk: ${start} to ${end}`);
+            console.log(`🔍 Using binary search discovery for blocks ${scanStart} to ${recentFromBlock}`);
+            const activeRanges = await discovery.discoverActiveBlocks(scanStart, recentFromBlock);
             
-            try {
-                const chunkResult = await this.scanByChunksWithTopics(vaultContract, start, end);
-                const { depositEvents: chunkDeposits, transferEvents: chunkTransfers } = chunkResult;
-                
-                if (chunkDeposits.length > 0) {
-                    depositEvents = depositEvents.concat(chunkDeposits);
-                    console.log(`  ✅ Found ${chunkDeposits.length} deposits in chunk ${start}-${end}`);
-                } else if (chunkTransfers.length > 0) {
-                    // Convert transfer mints to deposits
-                    const converted = this.processTransferEvents(chunkTransfers, vaultContract.address);
-                    if (converted.depositEvents.length > 0) {
-                        depositEvents = depositEvents.concat(converted.depositEvents);
-                        console.log(`  ✅ Converted ${converted.depositEvents.length} transfer mints to deposits in chunk ${start}-${end}`);
-                    }
-                }
-                
-                // Small delay to be respectful to RPC
-                await this.sleep(300);
-                
-            } catch (error) {
-                console.warn(`  ⚠️ Failed to scan historical chunk ${start}-${end}: ${error.message}`);
+            if (activeRanges.length === 0) {
+                console.log('⚠️ No historical activity found via block discovery');
+                return { depositEvents: [] };
             }
+            
+            console.log(`🎯 Discovery found ${activeRanges.length} active historical ranges`);
+            
+            let depositEvents = [];
+            
+            // Scan each discovered active range
+            for (const range of activeRanges) {
+                if (depositEvents.length >= 100) break; // Reasonable limit
+                
+                console.log(`  Scanning discovered range: blocks ${range.start} to ${range.end}`);
+                
+                try {
+                    const chunkResult = await this.scanByChunksWithTopics(vaultContract, range.start, range.end);
+                    const { depositEvents: chunkDeposits, transferEvents: chunkTransfers } = chunkResult;
+                    
+                    if (chunkDeposits.length > 0) {
+                        depositEvents = depositEvents.concat(chunkDeposits);
+                        console.log(`    ✅ Found ${chunkDeposits.length} deposits`);
+                    } else if (chunkTransfers.length > 0) {
+                        // Convert transfer mints to deposits
+                        const converted = this.processTransferEvents(chunkTransfers, vaultContract.address);
+                        if (converted.depositEvents.length > 0) {
+                            depositEvents = depositEvents.concat(converted.depositEvents);
+                            console.log(`    ✅ Converted ${converted.depositEvents.length} transfer mints to deposits`);
+                        }
+                    }
+                    
+                    await this.sleep(200); // Respectful delay
+                    
+                } catch (error) {
+                    console.warn(`    ⚠️ Failed to scan range ${range.start}-${range.end}: ${error.message}`);
+                }
+            }
+            
+            console.log(`🎆 Smart historical scan complete: found ${depositEvents.length} total deposits`);
+            return { depositEvents };
+            
+        } catch (error) {
+            console.warn('⚠️ Block discovery failed, falling back to limited chunk scan:', error.message);
+            
+            // Fallback to limited chunk scanning if discovery fails
+            const depositEvents = [];
+            const chunkSize = 10000;
+            const limitedRange = Math.min(50000, recentFromBlock); // Much smaller fallback
+            
+            for (let start = Math.max(0, recentFromBlock - limitedRange); start < recentFromBlock && depositEvents.length < 20; start += chunkSize) {
+                const end = Math.min(start + chunkSize - 1, recentFromBlock);
+                try {
+                    const chunkResult = await this.scanByChunksWithTopics(vaultContract, start, end);
+                    const { depositEvents: chunkDeposits } = chunkResult;
+                    if (chunkDeposits.length > 0) {
+                        depositEvents.push(...chunkDeposits);
+                        console.log(`  Fallback found ${chunkDeposits.length} deposits in ${start}-${end}`);
+                    }
+                    await this.sleep(250);
+                } catch (err) {
+                    console.warn(`  Fallback chunk ${start}-${end} failed: ${err.message}`);
+                }
+            }
+            
+            return { depositEvents };
         }
-        
-        console.log(`🎆 Historical scan complete: found ${depositEvents.length} total deposits`);
-        return { depositEvents };
     }
 
     async getBlockTimestamp(blockNumber) {
