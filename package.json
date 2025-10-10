@@ -1,0 +1,36 @@
+{
+  "name": "eva-vault-analyzer",
+  "version": "1.0.0",
+  "description": "ERC-4626 Vault Analyzer with Advanced Block Discovery - A comprehensive tool for analyzing vault deposits, withdrawals, and depositor statistics with programmatic block discovery capabilities.",
+  "main": "index.html",
+  "scripts": {
+    "dev": "serve .",
+    "build": "echo 'Static site - no build needed'",
+    "start": "serve .",
+    "deploy": "vercel --prod"
+  },
+  "keywords": [
+    "ethereum",
+    "erc4626",
+    "vault",
+    "defi",
+    "blockchain",
+    "analyzer",
+    "deposits",
+    "withdrawals",
+    "web3"
+  ],
+  "author": "alex0xhodler <alex@0xhodler.nl>",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/alex0xhodler/EVA.git"
+  },
+  "homepage": "https://github.com/alex0xhodler/EVA#readme",
+  "devDependencies": {
+    "serve": "^14.2.1"
+  },
+  "engines": {
+    "node": ">=16.0.0"
+  }
+}
