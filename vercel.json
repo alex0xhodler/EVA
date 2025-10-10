@@ -1,6 +1,8 @@
 {
   "version": 2,
   "name": "eva-vault-analyzer",
+  "buildCommand": "",
+  "outputDirectory": ".",
   "headers": [
     {
       "source": "/(.*)",
