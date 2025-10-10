@@ -562,6 +562,15 @@ class VaultTracker {
                 withdrawEvents = converted.withdrawEvents;
             }
 
+            // If we have withdrawals but no deposits, expand historical scan to get complete picture
+            if (depositEvents.length === 0 && withdrawEvents.length > 0) {
+                console.log('🔍 Found withdrawals but no deposits - expanding historical scan to get complete deposit history...');
+                const historicalScan = await this.expandHistoricalScan(vaultContract, fromBlock);
+                depositEvents = historicalScan.depositEvents;
+                // Keep the withdrawals we already found
+                console.log(`📈 Historical scan found ${depositEvents.length} additional deposits`);
+            }
+            
             // If still nothing, fall back to broader discovery scan
             if (depositEvents.length === 0 && withdrawEvents.length === 0) {
                 console.log('🔍 No events found via chunked scan, attempting discovery-based scan...');
@@ -1525,6 +1534,53 @@ class VaultTracker {
 
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
+    }
+
+    async expandHistoricalScan(vaultContract, recentFromBlock) {
+        console.log('🕰️ Expanding historical scan to find earlier deposits...');
+        const currentBlock = await this.provider.getBlockNumber();
+        
+        // Scan in larger chunks going backwards from our recent scan start
+        const chunkSize = 20000; // Larger chunks for historical data
+        const maxHistoricalBlocks = 200000; // Don't go too far back
+        let depositEvents = [];
+        
+        const scanStart = Math.max(0, recentFromBlock - maxHistoricalBlocks);
+        const scanEnd = recentFromBlock;
+        
+        console.log(`📊 Historical range: blocks ${scanStart} to ${scanEnd} (${scanEnd - scanStart} blocks)`);
+        
+        for (let start = scanStart; start < scanEnd && depositEvents.length < 50; start += chunkSize) {
+            const end = Math.min(start + chunkSize - 1, scanEnd);
+            
+            console.log(`  Scanning historical chunk: ${start} to ${end}`);
+            
+            try {
+                const chunkResult = await this.scanByChunksWithTopics(vaultContract, start, end);
+                const { depositEvents: chunkDeposits, transferEvents: chunkTransfers } = chunkResult;
+                
+                if (chunkDeposits.length > 0) {
+                    depositEvents = depositEvents.concat(chunkDeposits);
+                    console.log(`  ✅ Found ${chunkDeposits.length} deposits in chunk ${start}-${end}`);
+                } else if (chunkTransfers.length > 0) {
+                    // Convert transfer mints to deposits
+                    const converted = this.processTransferEvents(chunkTransfers, vaultContract.address);
+                    if (converted.depositEvents.length > 0) {
+                        depositEvents = depositEvents.concat(converted.depositEvents);
+                        console.log(`  ✅ Converted ${converted.depositEvents.length} transfer mints to deposits in chunk ${start}-${end}`);
+                    }
+                }
+                
+                // Small delay to be respectful to RPC
+                await this.sleep(300);
+                
+            } catch (error) {
+                console.warn(`  ⚠️ Failed to scan historical chunk ${start}-${end}: ${error.message}`);
+            }
+        }
+        
+        console.log(`🎆 Historical scan complete: found ${depositEvents.length} total deposits`);
+        return { depositEvents };
     }
 
     async getBlockTimestamp(blockNumber) {
