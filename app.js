@@ -617,18 +617,34 @@ class VaultTracker {
         const assetDecimals = vaultInfo.assetDecimals;
         const vaultDecimals = vaultInfo.decimals;
 
+        // Normalize address function for consistent comparison
+        const normalizeAddress = (addr) => {
+            if (!addr || typeof addr !== 'string') return '';
+            return addr.toLowerCase();
+        };
+        
+        // Pre-load all block timestamps to reduce RPC calls
+        const allBlockNumbers = [];
+        depositEvents.forEach(event => allBlockNumbers.push(event.blockNumber));
+        withdrawEvents.forEach(event => allBlockNumbers.push(event.blockNumber));
+        
+        if (allBlockNumbers.length > 0) {
+            await this.batchLoadTimestamps(allBlockNumbers);
+        }
+        
         // Process deposit events
         console.log(`📊 Processing ${depositEvents.length} deposit events...`);
         for (const event of depositEvents) {
             const { owner, assets, shares } = event.args;
             const blockTime = await this.getBlockTimestamp(event.blockNumber);
+            const normalizedOwner = normalizeAddress(owner);
             
             console.log(`  Deposit: ${owner} - Assets: ${assets.toString()} - Shares: ${shares.toString()}`);
             
-            if (!addressData.has(owner)) {
+            if (!addressData.has(normalizedOwner)) {
                 console.log(`  ✨ New depositor: ${owner}`);
-                addressData.set(owner, {
-                    address: owner,
+                addressData.set(normalizedOwner, {
+                    address: owner, // Keep original case for display
                     totalDeposits: BigInt(0),
                     totalWithdrawals: BigInt(0),
                     totalShares: BigInt(0),
@@ -637,9 +653,12 @@ class VaultTracker {
                     depositCount: 0,
                     withdrawalCount: 0
                 });
+            } else {
+                // Update display address to most recent format (for case consistency)
+                addressData.get(normalizedOwner).address = owner;
             }
             
-            const data = addressData.get(owner);
+            const data = addressData.get(normalizedOwner);
             data.totalDeposits += BigInt(assets);
             data.totalShares += BigInt(shares);
             data.depositCount++;
@@ -654,11 +673,12 @@ class VaultTracker {
         for (const event of withdrawEvents) {
             const { owner, assets, shares } = event.args;
             const blockTime = await this.getBlockTimestamp(event.blockNumber);
+            const normalizedOwner = normalizeAddress(owner);
             
             console.log(`  Withdrawal: ${owner} - Assets: ${assets.toString()} - Shares: ${shares.toString()}`);
             
-            if (!addressData.has(owner)) {
-                addressData.set(owner, {
+            if (!addressData.has(normalizedOwner)) {
+                addressData.set(normalizedOwner, {
                     address: owner,
                     totalDeposits: BigInt(0),
                     totalWithdrawals: BigInt(0),
@@ -668,9 +688,12 @@ class VaultTracker {
                     depositCount: 0,
                     withdrawalCount: 0
                 });
+            } else {
+                // Update display address to most recent format (for case consistency)
+                addressData.get(normalizedOwner).address = owner;
             }
             
-            const data = addressData.get(owner);
+            const data = addressData.get(normalizedOwner);
             data.totalWithdrawals += BigInt(assets);
             data.totalShares -= BigInt(shares);
             data.withdrawalCount++;
@@ -1799,10 +1822,40 @@ class VaultTracker {
 
     async getBlockTimestamp(blockNumber) {
         if (this.blockTimestampCache.has(blockNumber)) return this.blockTimestampCache.get(blockNumber);
-        const blk = await this.provider.getBlock(blockNumber);
-        const ts = blk?.timestamp || Math.floor(Date.now() / 1000);
-        this.blockTimestampCache.set(blockNumber, ts);
-        return ts;
+        
+        try {
+            const blk = await this.provider.getBlock(blockNumber);
+            const ts = blk?.timestamp || Math.floor(Date.now() / 1000);
+            this.blockTimestampCache.set(blockNumber, ts);
+            return ts;
+        } catch (error) {
+            // Fallback: estimate timestamp (Plasma ~1 second per block)
+            const currentBlock = await this.provider.getBlockNumber();
+            const estimatedTs = Math.floor(Date.now() / 1000) - (currentBlock - blockNumber);
+            this.blockTimestampCache.set(blockNumber, estimatedTs);
+            return estimatedTs;
+        }
+    }
+    
+    async batchLoadTimestamps(blockNumbers) {
+        const uniqueBlocks = [...new Set(blockNumbers)].filter(bn => !this.blockTimestampCache.has(bn));
+        if (uniqueBlocks.length === 0) return;
+        
+        console.log(`📅 Batch loading ${uniqueBlocks.length} block timestamps...`);
+        
+        // Load timestamps in smaller batches to avoid overwhelming RPC
+        const batchSize = 10;
+        for (let i = 0; i < uniqueBlocks.length; i += batchSize) {
+            const batch = uniqueBlocks.slice(i, i + batchSize);
+            try {
+                await Promise.all(batch.map(blockNumber => this.getBlockTimestamp(blockNumber)));
+                if (i % 50 === 0) { // Progress update every 50 batches
+                    console.log(`  Loaded ${Math.min(i + batchSize, uniqueBlocks.length)}/${uniqueBlocks.length} timestamps`);
+                }
+            } catch (error) {
+                console.warn(`Failed to load timestamp batch starting at block ${batch[0]}`);
+            }
+        }
     }
 }
 
