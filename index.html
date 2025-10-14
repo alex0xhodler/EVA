@@ -65,14 +65,16 @@
                                 </select>
                             </div>
 
-                            <!-- Block Range -->
+                            <!-- Scan Depth -->
                             <div class="form-group">
-                                <label for="blockRange" class="form-label">Block Range</label>
-                                <select id="blockRange" class="form-control">
-                                    <option value="deployment">From Deployment</option>
-                                    <option value="30days">Last 30 Days</option>
-                                    <option value="90days">Last 90 Days</option>
+                                <label for="scanDepth" class="form-label">Analysis Depth</label>
+                                <select id="scanDepth" class="form-control">
+                                    <option value="quick">Quick Scan (Last 30 days)</option>
+                                    <option value="standard" selected>Standard Scan (Last 6 months)</option>
+                                    <option value="deep">Deep Scan (Last 2 years)</option>
+                                    <option value="complete">Complete History (All time)</option>
                                 </select>
+                                <small class="form-help">Deeper scans take longer but provide more complete analysis</small>
                             </div>
 
                             <!-- Query Controls -->
@@ -95,6 +97,19 @@
                                     <span class="btn-text">Analyze Vault</span>
                                     <span class="loading-spinner hidden">⏳</span>
                                 </button>
+                                <div id="analysisProgress" class="analysis-progress hidden">
+                                    <div class="progress-info">
+                                        <span id="progressStatus">Initializing...</span>
+                                        <span id="progressTime">0s</span>
+                                    </div>
+                                    <div class="progress-bar-container">
+                                        <div id="progressBar" class="progress-bar" style="width: 0%"></div>
+                                    </div>
+                                    <div class="progress-actions">
+                                        <button id="continueInBackground" class="btn btn--outline btn--sm hidden">Continue in Background</button>
+                                        <button id="cancelAnalysis" class="btn btn--outline btn--sm">Cancel</button>
+                                    </div>
+                                </div>
                             </div>
                         </div>
                     </div>

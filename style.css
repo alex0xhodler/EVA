@@ -132,16 +132,21 @@
   --shadow-inset-sm: inset 0 1px 0 rgba(255, 255, 255, 0.15),
     inset 0 -1px 0 rgba(0, 0, 0, 0.03);
 
-  /* Animation */
-  --duration-fast: 150ms;
-  --duration-normal: 250ms;
-  --ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
+/* Animation */
+--duration-fast: 150ms;
+--duration-normal: 250ms;
+--ease-standard: cubic-bezier(0.16, 1, 0.3, 1);
 
-  /* Layout */
-  --container-sm: 640px;
-  --container-md: 768px;
-  --container-lg: 1024px;
-  --container-xl: 1280px;
+/* Layout */
+--container-sm: 640px;
+--container-md: 768px;
+--container-lg: 1024px;
+--container-xl: 1280px;
+
+/* Progress and Analysis */
+--progress-height: 8px;
+--progress-bg: var(--color-secondary);
+--progress-fill: linear-gradient(90deg, var(--color-primary), var(--color-primary-hover));
 }
 
 /* Dark mode colors */
@@ -1070,6 +1075,170 @@ select.form-control {
   padding: var(--space-12) var(--space-16);
   text-align: left;
   border-bottom: 1px solid var(--color-border);
+}
+
+.data-table th {
+  background: var(--color-secondary);
+  font-weight: var(--font-weight-semibold);
+  color: var(--color-text);
+  position: sticky;
+  top: 0;
+  z-index: 1;
+}
+
+/* Analysis Progress Styles */
+.analysis-progress {
+  margin-top: 1rem;
+  padding: 1.5rem;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+}
+
+.progress-info {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 0.75rem;
+  font-size: var(--font-size-sm);
+  font-weight: var(--font-weight-medium);
+}
+
+#progressStatus {
+  color: var(--color-text);
+}
+
+#progressTime {
+  color: var(--color-text-secondary);
+  font-family: var(--font-family-mono);
+}
+
+.progress-bar-container {
+  width: 100%;
+  height: var(--progress-height);
+  background: var(--progress-bg);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  margin-bottom: 1rem;
+  position: relative;
+}
+
+.progress-bar {
+  height: 100%;
+  background: var(--progress-fill);
+  border-radius: var(--radius-sm);
+  transition: width 0.5s ease;
+  position: relative;
+}
+
+.progress-bar::after {
+  content: '';
+  position: absolute;
+  top: 0;
+  left: 0;
+  bottom: 0;
+  right: 0;
+  background-image: linear-gradient(
+    -45deg,
+    rgba(255, 255, 255, 0.2) 25%,
+    transparent 25%,
+    transparent 50%,
+    rgba(255, 255, 255, 0.2) 50%,
+    rgba(255, 255, 255, 0.2) 75%,
+    transparent 75%,
+    transparent
+  );
+  background-size: 1rem 1rem;
+  animation: progress-stripe 1s linear infinite;
+}
+
+@keyframes progress-stripe {
+  0% { background-position: 1rem 0; }
+  100% { background-position: 0 0; }
+}
+
+.progress-actions {
+  display: flex;
+  gap: 0.75rem;
+  justify-content: flex-end;
+  flex-wrap: wrap;
+}
+
+.form-help {
+  display: block;
+  margin-top: 0.25rem;
+  font-size: var(--font-size-xs);
+  color: var(--color-text-secondary);
+  opacity: 0.8;
+}
+
+/* Enhanced button states for progress actions */
+.btn--outline.btn--sm {
+  font-size: var(--font-size-xs);
+  padding: 0.5rem 1rem;
+  font-weight: var(--font-weight-medium);
+}
+
+/* Responsive progress layout */
+@media (max-width: 640px) {
+  .progress-info {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.25rem;
+  }
+  
+  .progress-actions {
+    justify-content: stretch;
+  }
+  
+  .progress-actions .btn {
+    flex: 1;
+    min-width: 0;
+  }
+}
+
+.background-analysis-indicator {
+  position: fixed;
+  top: 1rem;
+  right: 1rem;
+  z-index: 1000;
+  background: var(--color-surface);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-lg);
+  padding: 1rem;
+  box-shadow: var(--shadow-lg);
+  font-size: var(--font-size-sm);
+  max-width: 300px;
+}
+
+.indicator-content {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.indicator-spinner {
+  animation: spin 2s linear infinite;
+}
+
+.indicator-close {
+  background: none;
+  border: none;
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  font-size: var(--font-size-lg);
+  margin-left: auto;
+  padding: 0;
+}
+
+.indicator-close:hover {
+  color: var(--color-text);
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
 }
 
 .data-table th {

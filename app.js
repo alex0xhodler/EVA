@@ -176,6 +176,17 @@ class VaultTracker {
         this.currentPage = 1;
         this.pageSize = 25;
         
+        // Analysis state and caching
+        this.analysisState = {
+            isRunning: false,
+            isCancelled: false,
+            startTime: null,
+            progress: 0,
+            status: 'idle',
+            backgroundMode: false
+        };
+        this.scanCache = new Map(); // Cache discovered block ranges
+        
         // Chain configurations with reliable RPC endpoints
         this.chains = {
             1: { name: 'Ethereum', rpc: 'https://ethereum.publicnode.com', explorer: 'https://etherscan.io' },
@@ -292,6 +303,17 @@ class VaultTracker {
         document.querySelectorAll('th[data-sort]').forEach(th => {
             th.addEventListener('click', () => this.sortTable(th.getAttribute('data-sort')));
         });
+        
+        // Progress controls
+        const continueBtn = document.getElementById('continueInBackground');
+        if (continueBtn) {
+            continueBtn.addEventListener('click', () => this.continueInBackground());
+        }
+        
+        const cancelBtn = document.getElementById('cancelAnalysis');
+        if (cancelBtn) {
+            cancelBtn.addEventListener('click', () => this.cancelAnalysis());
+        }
     }
 
     setupTheme() {
@@ -354,7 +376,7 @@ class VaultTracker {
         
         try {
             console.log('📊 Starting vault analysis...');
-            this.showLoading();
+            this.initializeAnalysisProgress();
             this.hideError();
             
             // Destroy any existing charts first
@@ -391,17 +413,17 @@ class VaultTracker {
             this.updateProgress(85, 'Processing blockchain data...');
             await this.processRealEventData(vaultInfo, events);
             
-            this.updateProgress(95, 'Generating visualizations...');
+            this.updateAnalysisProgress(85, 'Generating visualizations...');
             this.renderDashboard();
             
-            this.updateProgress(100, 'Analysis complete!');
-            await this.sleep(500);
-            this.hideLoading();
+            this.updateAnalysisProgress(100, 'Analysis complete!');
+            await this.sleep(1000);
+            this.finishAnalysisProgress();
             this.showDashboard();
             
         } catch (error) {
             console.error('Analysis error:', error);
-            this.hideLoading();
+            this.finishAnalysisProgress();
             this.showError(error.message);
         }
     }
@@ -527,57 +549,55 @@ class VaultTracker {
 
     async fetchVaultEvents(vaultContract) {
         try {
-            const blockRange = document.getElementById('blockRange').value;
-            let fromBlock = 0;
+            const scanDepth = document.getElementById('scanDepth').value;
             const currentBlock = await this.provider.getBlockNumber();
-
+            
+            this.updateAnalysisProgress(5, 'Determining scan range...');
             console.log(`Current block number: ${currentBlock}`);
 
-            // Determine block range based on selection, with RPC limits in mind
-            const maxBlockRange = 9000; // Stay under 10k limit for Plasma RPC
+            // Determine scan configuration based on depth selection
+            const scanConfig = this.getScanConfiguration(scanDepth, currentBlock);
+            console.log(`Scan depth: ${scanDepth}, range: ${scanConfig.fromBlock} to ${currentBlock} (${currentBlock - scanConfig.fromBlock} blocks)`);
+            
+            if (this.analysisState.isCancelled) return { depositEvents: [], withdrawEvents: [] };
 
-            if (blockRange === '30days') {
-                const idealRange = 30 * 24 * 60 * 4; // Approximate 30 days
-                fromBlock = Math.max(0, currentBlock - Math.min(idealRange, maxBlockRange));
-            } else if (blockRange === '90days') {
-                const idealRange = 90 * 24 * 60 * 4; // Approximate 90 days
-                fromBlock = Math.max(0, currentBlock - Math.min(idealRange, maxBlockRange));
-            } else {
-                // For "deployment", use maximum allowed range
-                fromBlock = Math.max(0, currentBlock - maxBlockRange);
-            }
+            this.updateAnalysisProgress(15, 'Scanning recent activity...');
 
-            console.log(`Querying events (chunked) from block ${fromBlock} to ${currentBlock} (range: ${currentBlock - fromBlock} blocks)`);
+            // Phase 1: Recent activity scan using chunked topics
+            const recentScan = await this.scanByChunksWithTopics(
+                vaultContract, 
+                scanConfig.recentFromBlock, 
+                currentBlock
+            );
+            let { depositEvents, withdrawEvents, transferEvents } = recentScan;
+            
+            this.updateAnalysisProgress(30, `Found ${depositEvents.length + withdrawEvents.length} recent events`);
+            console.log(`📊 Recent scan results: ${depositEvents.length} deposits, ${withdrawEvents.length} withdrawals, ${transferEvents.length} transfers`);
 
-            // Always prefer chunked scanning with topics to handle RPC quirks and non-standard events
-            const chunked = await this.scanByChunksWithTopics(vaultContract, fromBlock, currentBlock);
-            let { depositEvents, withdrawEvents, transferEvents } = chunked;
-            console.log(`📊 Final results (chunked): ${depositEvents.length} deposits, ${withdrawEvents.length} withdrawals, ${transferEvents.length} transfers`);
+            if (this.analysisState.isCancelled) return { depositEvents, withdrawEvents };
 
-            // If no standard events but we have transfers, convert immediately
+            // Convert transfers if no standard events found
             if (depositEvents.length === 0 && withdrawEvents.length === 0 && transferEvents.length > 0) {
-                console.log('🔄 No Deposit/Withdraw found, converting Transfer mint/burn to deposits/withdrawals');
+                console.log('🔄 Converting Transfer events to deposits/withdrawals');
                 const converted = this.processTransferEvents(transferEvents, vaultContract.address);
                 depositEvents = converted.depositEvents;
                 withdrawEvents = converted.withdrawEvents;
             }
 
-            // If we have withdrawals but no deposits, expand historical scan to get complete picture
-            if (depositEvents.length === 0 && withdrawEvents.length > 0) {
-                console.log('🔍 Found withdrawals but no deposits - expanding historical scan to get complete deposit history...');
-                const historicalScan = await this.expandHistoricalScan(vaultContract, fromBlock);
-                depositEvents = historicalScan.depositEvents;
-                // Keep the withdrawals we already found
-                console.log(`📈 Historical scan found ${depositEvents.length} additional deposits`);
-            }
-            
-            // If still nothing, fall back to broader discovery scan
-            if (depositEvents.length === 0 && withdrawEvents.length === 0) {
-                console.log('🔍 No events found via chunked scan, attempting discovery-based scan...');
-                const chunkResults = await this.scanInChunks(vaultContract, currentBlock);
-                return chunkResults;
+            // Phase 2: Historical expansion if needed and configured
+            if (scanConfig.includeHistorical && (depositEvents.length === 0 || withdrawEvents.length === 0)) {
+                this.updateAnalysisProgress(45, 'Expanding to historical data...');
+                console.log('🔍 Expanding scan to find complete deposit/withdrawal history...');
+                
+                const historicalScan = await this.expandHistoricalScan(vaultContract, scanConfig.fromBlock, scanConfig.recentFromBlock);
+                
+                if (depositEvents.length === 0 && historicalScan.depositEvents.length > 0) {
+                    depositEvents = historicalScan.depositEvents;
+                    console.log(`📈 Historical scan added ${depositEvents.length} deposits`);
+                }
             }
 
+            this.updateAnalysisProgress(70, 'Processing event data...');
             return { depositEvents, withdrawEvents };
         } catch (error) {
             console.error('❌ Critical error fetching events:', error);
@@ -1535,16 +1555,176 @@ class VaultTracker {
     sleep(ms) {
         return new Promise(resolve => setTimeout(resolve, ms));
     }
+    
+    getScanConfiguration(scanDepth, currentBlock) {
+        const baseConfig = {
+            currentBlock,
+            includeHistorical: false,
+            maxHistoricalBlocks: 0,
+            chunkSize: 2000,
+            respectRateLimit: true
+        };
+        
+        switch (scanDepth) {
+            case 'quick':
+                // Last 30 days - fast scan, no historical expansion
+                const quickBlocks = Math.min(30 * 24 * 60 * 60, 50000); // ~30 days or 50k blocks max
+                return {
+                    ...baseConfig,
+                    fromBlock: Math.max(0, currentBlock - quickBlocks),
+                    recentFromBlock: Math.max(0, currentBlock - quickBlocks),
+                    includeHistorical: false,
+                    estimatedTime: '2-5 minutes'
+                };
+                
+            case 'standard':
+                // Last 6 months with limited historical expansion
+                const standardRecentBlocks = Math.min(90 * 24 * 60 * 60, 150000); // ~90 days recent
+                const standardHistoricalBlocks = Math.min(180 * 24 * 60 * 60, 300000); // ~180 days total
+                return {
+                    ...baseConfig,
+                    fromBlock: Math.max(0, currentBlock - standardHistoricalBlocks),
+                    recentFromBlock: Math.max(0, currentBlock - standardRecentBlocks),
+                    includeHistorical: true,
+                    maxHistoricalBlocks: 300000,
+                    estimatedTime: '5-15 minutes'
+                };
+                
+            case 'deep':
+                // Last 2 years with comprehensive scanning
+                const deepRecentBlocks = Math.min(180 * 24 * 60 * 60, 300000); // ~180 days recent
+                const deepHistoricalBlocks = Math.min(730 * 24 * 60 * 60, 1000000); // ~2 years total
+                return {
+                    ...baseConfig,
+                    fromBlock: Math.max(0, currentBlock - deepHistoricalBlocks),
+                    recentFromBlock: Math.max(0, currentBlock - deepRecentBlocks),
+                    includeHistorical: true,
+                    maxHistoricalBlocks: 1000000,
+                    chunkSize: 5000,
+                    estimatedTime: '15-45 minutes'
+                };
+                
+            case 'complete':
+                // Complete history - all available data
+                const completeRecentBlocks = Math.min(365 * 24 * 60 * 60, 500000); // ~1 year recent
+                return {
+                    ...baseConfig,
+                    fromBlock: 0, // From genesis or deployment
+                    recentFromBlock: Math.max(0, currentBlock - completeRecentBlocks),
+                    includeHistorical: true,
+                    maxHistoricalBlocks: currentBlock,
+                    chunkSize: 10000,
+                    respectRateLimit: false, // More aggressive for complete scans
+                    estimatedTime: '45+ minutes'
+                };
+                
+            default:
+                return baseConfig;
+        }
+    }
+    
+    initializeAnalysisProgress() {
+        this.analysisState = {
+            isRunning: true,
+            isCancelled: false,
+            startTime: Date.now(),
+            progress: 0,
+            status: 'Initializing...',
+            backgroundMode: false
+        };
+        
+        // Show progress UI
+        document.getElementById('analysisProgress').classList.remove('hidden');
+        document.getElementById('analyzeVault').disabled = true;
+        
+        // Start timer
+        this.progressTimer = setInterval(() => {
+            if (this.analysisState.isRunning && !this.analysisState.backgroundMode) {
+                const elapsed = Math.floor((Date.now() - this.analysisState.startTime) / 1000);
+                document.getElementById('progressTime').textContent = `${elapsed}s`;
+                
+                // Show "continue in background" option after 30 seconds
+                if (elapsed > 30) {
+                    document.getElementById('continueInBackground').classList.remove('hidden');
+                }
+            }
+        }, 1000);
+    }
+    
+    updateAnalysisProgress(percent, status) {
+        if (!this.analysisState.isRunning) return;
+        
+        this.analysisState.progress = percent;
+        this.analysisState.status = status;
+        
+        if (!this.analysisState.backgroundMode) {
+            document.getElementById('progressBar').style.width = `${percent}%`;
+            document.getElementById('progressStatus').textContent = status;
+        }
+        
+        console.log(`📈 Progress: ${percent}% - ${status}`);
+    }
+    
+    finishAnalysisProgress() {
+        this.analysisState.isRunning = false;
+        
+        if (this.progressTimer) {
+            clearInterval(this.progressTimer);
+            this.progressTimer = null;
+        }
+        
+        // Hide progress UI
+        document.getElementById('analysisProgress').classList.add('hidden');
+        document.getElementById('analyzeVault').disabled = false;
+        document.getElementById('continueInBackground').classList.add('hidden');
+    }
+    
+    continueInBackground() {
+        this.analysisState.backgroundMode = true;
+        document.getElementById('analysisProgress').classList.add('hidden');
+        document.getElementById('analyzeVault').disabled = false;
+        
+        // Show a subtle background indicator
+        this.showBackgroundAnalysisIndicator();
+    }
+    
+    cancelAnalysis() {
+        this.analysisState.isCancelled = true;
+        this.finishAnalysisProgress();
+        console.log('❌ Analysis cancelled by user');
+    }
+    
+    showBackgroundAnalysisIndicator() {
+        // Create a small indicator that analysis is continuing
+        const indicator = document.createElement('div');
+        indicator.id = 'backgroundIndicator';
+        indicator.className = 'background-analysis-indicator';
+        indicator.innerHTML = `
+            <div class="indicator-content">
+                <span class="indicator-spinner">⏳</span>
+                <span>Analysis continuing in background...</span>
+                <button class="indicator-close" onclick="this.parentElement.parentElement.remove()">×</button>
+            </div>
+        `;
+        document.body.appendChild(indicator);
+        
+        // Auto-remove after analysis completes
+        setTimeout(() => {
+            const bgIndicator = document.getElementById('backgroundIndicator');
+            if (bgIndicator) bgIndicator.remove();
+        }, 300000); // 5 minutes
+    }
 
-    async expandHistoricalScan(vaultContract, recentFromBlock) {
+    async expandHistoricalScan(vaultContract, historicalFromBlock, recentFromBlock) {
         console.log('🕰️ Expanding historical scan using smart block discovery...');
         const vaultAddress = vaultContract.target || vaultContract.address;
         
         try {
             // Use VaultBlockDiscovery to find active blocks efficiently
             const discovery = new VaultBlockDiscovery(this.provider, vaultAddress);
-            const maxHistoricalBlocks = 500000; // Expand search range since discovery is efficient
-            const scanStart = Math.max(0, recentFromBlock - maxHistoricalBlocks);
+            const scanStart = historicalFromBlock || Math.max(0, recentFromBlock - 500000);
+            
+            this.updateAnalysisProgress(50, 'Discovering historical activity periods...');
             
             console.log(`🔍 Using binary search discovery for blocks ${scanStart} to ${recentFromBlock}`);
             const activeRanges = await discovery.discoverActiveBlocks(scanStart, recentFromBlock);
