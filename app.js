@@ -251,7 +251,8 @@ class VaultTracker {
         console.log('Example vault buttons found:', exampleBtns.length);
         const plasmaExamples = new Set([
             '0x527295f09ff7c411b213b29a0de8c816a669b3fe',
-            '0xad4165f195aedbc26f2cdbfe1f1ff0160b928bed'
+            '0xad4165f195aedbc26f2cdbfe1f1ff0160b928bed',
+            '0x003671b7ff5cb7f5d9b7e3a0637839d8624ca5aa'
         ]);
         exampleBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
