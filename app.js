@@ -249,17 +249,21 @@ class VaultTracker {
         // Example vault buttons
         const exampleBtns = document.querySelectorAll('.example-vault');
         console.log('Example vault buttons found:', exampleBtns.length);
+        const plasmaExamples = new Set([
+            '0x527295f09ff7c411b213b29a0de8c816a669b3fe',
+            '0xad4165f195aedbc26f2cdbfe1f1ff0160b928bed'
+        ]);
         exampleBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
                 const address = e.target.getAttribute('data-address');
                 document.getElementById('vaultAddress').value = address;
                 
-                // Auto-select the correct network for known vaults
-                if (address === '0x527295f09Ff7c411B213B29a0DE8c816a669b3fe') {
+                // Auto-select Plasma for known PT vaults on Plasma
+                if (address && plasmaExamples.has(address.toLowerCase())) {
                     document.getElementById('chainSelect').value = '9745'; // Plasma
                     console.log('🌐 Auto-selected Plasma network for this vault');
                 } else {
-                    document.getElementById('chainSelect').value = '1'; // Ethereum for others
+                    document.getElementById('chainSelect').value = '1'; // Default to Ethereum otherwise
                     console.log('🌐 Auto-selected Ethereum network for this vault');
                 }
             });
