@@ -253,7 +253,9 @@ class VaultTracker {
             '0x527295f09ff7c411b213b29a0de8c816a669b3fe',
             '0xad4165f195aedbc26f2cdbfe1f1ff0160b928bed',
             '0x003671b7ff5cb7f5d9b7e3a0637839d8624ca5aa',
-            '0x46d2cdcae9b0369a4b4c17ba2e34e4c7d0b2832a'
+            '0x46d2cdcae9b0369a4b4c17ba2e34e4c7d0b2832a',
+            '0x9abbc903af7da20325f0c4f2fe3a77ae4e1694b4',
+            '0x45f4ccae775bedd6d80c368eba87f41d8eef1067'
         ]);
         exampleBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
