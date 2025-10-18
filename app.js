@@ -246,7 +246,7 @@ class VaultTracker {
             themeToggle.addEventListener('click', () => this.toggleTheme());
         }
 
-        // Example vault buttons
+        // Example vaults (buttons legacy + dropdown)
         const exampleBtns = document.querySelectorAll('.example-vault');
         console.log('Example vault buttons found:', exampleBtns.length);
         const plasmaExamples = new Set([
@@ -261,17 +261,55 @@ class VaultTracker {
             btn.addEventListener('click', (e) => {
                 const address = e.target.getAttribute('data-address');
                 document.getElementById('vaultAddress').value = address;
-                
-                // Auto-select Plasma for known PT vaults on Plasma
                 if (address && plasmaExamples.has(address.toLowerCase())) {
-                    document.getElementById('chainSelect').value = '9745'; // Plasma
+                    document.getElementById('chainSelect').value = '9745';
                     console.log('🌐 Auto-selected Plasma network for this vault');
                 } else {
-                    document.getElementById('chainSelect').value = '1'; // Default to Ethereum otherwise
+                    document.getElementById('chainSelect').value = '1';
                     console.log('🌐 Auto-selected Ethereum network for this vault');
                 }
             });
         });
+
+        const exampleSelect = document.getElementById('exampleVaults');
+        if (exampleSelect) {
+            exampleSelect.addEventListener('change', (e) => {
+                const address = e.target.value;
+                if (!address) return;
+                document.getElementById('vaultAddress').value = address;
+                if (plasmaExamples.has(address.toLowerCase())) {
+                    document.getElementById('chainSelect').value = '9745';
+                    console.log('🌐 Auto-selected Plasma network for this vault');
+                } else {
+                    document.getElementById('chainSelect').value = '1';
+                    console.log('🌐 Auto-selected Ethereum network for this vault');
+                }
+            });
+        }
+
+        // Tooltip for Analysis Depth
+        const infoBtn = document.getElementById('scanDepthInfo');
+        const infoTooltip = document.getElementById('scanDepthTooltip');
+        if (infoBtn && infoTooltip) {
+            const hideTooltip = () => {
+                infoTooltip.classList.add('hidden');
+                infoBtn.setAttribute('aria-expanded', 'false');
+            };
+            const showTooltip = () => {
+                infoTooltip.classList.remove('hidden');
+                infoBtn.setAttribute('aria-expanded', 'true');
+            };
+            infoBtn.addEventListener('click', (ev) => {
+                ev.preventDefault();
+                if (infoTooltip.classList.contains('hidden')) showTooltip(); else hideTooltip();
+            });
+            document.addEventListener('click', (ev) => {
+                if (!infoTooltip.contains(ev.target) && ev.target !== infoBtn) hideTooltip();
+            });
+            document.addEventListener('keydown', (ev) => {
+                if (ev.key === 'Escape') hideTooltip();
+            });
+        }
 
         // Analyze vault buttons (new and old)
         const newAnalyzeBtn = document.getElementById('analyzeButton');
@@ -2000,7 +2038,7 @@ function setAnalyzingUI(on) {
         }
     });
     
-    // Also disable example vault buttons
+    // Also disable example vault controls (legacy buttons + new dropdown)
     document.querySelectorAll('.example-vault').forEach(btn => {
         btn.disabled = on;
         if (on) {
@@ -2009,6 +2047,11 @@ function setAnalyzingUI(on) {
             btn.removeAttribute('aria-disabled');
         }
     });
+    const exampleSelect = document.getElementById('exampleVaults');
+    if (exampleSelect) {
+        exampleSelect.disabled = on;
+        exampleSelect.setAttribute('aria-disabled', String(on));
+    }
 
     // Progress panel visibility + header
     const progressPanel = UI.progressPanel || document.getElementById('analysisProgress');

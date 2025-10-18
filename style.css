@@ -1744,9 +1744,19 @@ select.form-control option {
   margin-top: var(--space-8);
 }
 
+/* Centered actions row */
+.controls-actions {
+  display: flex;
+  justify-content: center;
+  margin-top: var(--space-12);
+}
+.controls-actions .analyze-btn {
+  min-width: 220px;
+}
+
 .controls-row {
   display: grid;
-  grid-template-columns: 2.2fr 1.1fr 1.2fr 1.1fr auto 1.2fr; /* address, network, depth, min, checkbox, analyze */
+  grid-template-columns: 2.2fr 1.1fr 1.2fr 1.1fr auto; /* address, network, depth, min, checkbox */
   align-items: end;
   gap: var(--space-16);
 }
@@ -1762,6 +1772,36 @@ select.form-control option {
 .controls-row .checkbox,
 .controls-row .field-include-withdrawn {
   white-space: nowrap;
+}
+
+/* Tooltip styles */
+.form-group { position: relative; }
+.tooltip-trigger {
+  margin-left: 6px;
+  width: 20px; height: 20px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: var(--color-secondary);
+  color: var(--color-text);
+  font-size: 12px;
+  line-height: 18px;
+  text-align: center;
+  cursor: pointer;
+}
+.tooltip {
+  position: absolute;
+  top: 100%;
+  left: 0;
+  margin-top: 6px;
+  max-width: 280px;
+  padding: 10px 12px;
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius-base);
+  background: var(--color-surface);
+  box-shadow: var(--shadow-sm);
+  font-size: var(--font-size-sm);
+  color: var(--color-text-secondary);
+  z-index: 20;
 }
 
 /* Analyze button loading state */
