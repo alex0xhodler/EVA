@@ -1747,16 +1747,24 @@ select.form-control option {
 /* Centered actions row */
 .controls-actions {
   display: flex;
+  flex-direction: column;
+  align-items: center;
   justify-content: center;
   margin-top: var(--space-12);
+  gap: var(--space-8);
 }
 .controls-actions .analyze-btn {
-  min-width: 220px;
+  min-width: 240px;
 }
+.actions-secondary {
+  color: var(--color-text-secondary);
+  font-size: var(--font-size-sm);
+}
+.actions-secondary .checkbox-label { cursor: pointer; }
 
 .controls-row {
   display: grid;
-  grid-template-columns: 2.2fr 1.1fr 1.2fr 1.1fr auto; /* address, network, depth, min, checkbox */
+  grid-template-columns: 2.6fr 1.2fr 1.4fr 1.2fr; /* address, network, depth, min */
   align-items: end;
   gap: var(--space-16);
 }

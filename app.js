@@ -2037,6 +2037,12 @@ function setAnalyzingUI(on) {
             console.warn('Could not disable element:', el, e);
         }
     });
+    // Also disable Include Withdrawn (now below actions)
+    const includeCb = document.getElementById('includeWithdrawn');
+    if (includeCb) {
+        includeCb.disabled = on;
+        includeCb.setAttribute('aria-disabled', String(on));
+    }
     
     // Also disable example vault controls (legacy buttons + new dropdown)
     document.querySelectorAll('.example-vault').forEach(btn => {
