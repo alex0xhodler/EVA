@@ -30,94 +30,104 @@
             <section class="input-section">
                 <div class="card">
                     <div class="card__body">
-                        <div class="form-grid">
-                            <!-- Vault Address Input -->
+                        <section id="search-controls" class="search-controls" aria-label="Vault analysis controls">
+                            <!-- Example Vaults -->
                             <div class="form-group">
-                                <label for="vaultAddress" class="form-label">Vault Contract Address</label>
-                                <div class="input-with-examples">
+                                <div class="example-vaults">
+                                    <span class="example-label">Example Vaults:</span>
+                                    <button type="button" class="example-vault" data-address="0x527295f09Ff7c411B213B29a0DE8c816a669b3fe">
+                                        Euler PT-USDe-15JAN2026 (Plasma)
+                                    </button>
+                                    <button type="button" class="example-vault" data-address="0x46d2CdcAE9b0369a4b4c17ba2e34e4c7d0B2832a">
+                                        Euler PT-sUSDai-16MAR2026 (Plasma)
+                                    </button>
+                                    <button type="button" class="example-vault" data-address="0x45F4ccae775BEDd6d80c368ebA87f41D8EEf1067">
+                                        Euler PT-sUSDE-15JAN2026 (Plasma)
+                                    </button>
+                                    <button type="button" class="example-vault" data-address="0x9ABBc903Af7DA20325F0C4f2fE3a77AE4e1694B4">
+                                        Euler PT-USDai-19MAR2026 (Plasma)
+                                    </button>
+                                    <button type="button" class="example-vault" data-address="0x003671b7Ff5CB7F5d9B7E3a0637839D8624ca5AA">
+                                        Euler PT-syrupUSDT-29JAN2026 (Plasma)
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- Controls Row -->
+                            <div id="controls-row" class="controls-row" role="group" aria-label="Search controls">
+                                <!-- Vault Address Input -->
+                                <div class="form-group">
+                                    <label for="vaultAddress" class="form-label">Vault Contract Address</label>
                                     <input type="text" id="vaultAddress" class="form-control" 
                                            placeholder="0x527295f09Ff7c411B213B29a0DE8c816a669b3fe"
                                            title="Enter a valid Ethereum address (0x followed by 40 hex characters)">
-<div class="example-vaults">
-                                        <span class="example-label">Example Vaults:</span>
-                                        <button type="button" class="example-vault" data-address="0x527295f09Ff7c411B213B29a0DE8c816a669b3fe">
-                                            Euler PT-USDe-15JAN2026 (Plasma)
-                                        </button>
-<button type="button" class="example-vault" data-address="0x46d2CdcAE9b0369a4b4c17BA2E34e4c7D0B2832a">
-                                            Euler PT-sUSDai-16MAR2026 (Plasma)
-                                        </button>
-<button type="button" class="example-vault" data-address="0x45F4ccae775BEDd6d80c368ebA87f41D8EEf1067">
-                                            Euler PT-sUSDE-15JAN2026 (Plasma)
-                                        </button>
-<button type="button" class="example-vault" data-address="0x9ABBc903Af7DA20325F0C4f2fE3a77AE4e1694B4">
-                                            Euler PT-USDai-19MAR2026 (Plasma)
-                                        </button>
-<button type="button" class="example-vault" data-address="0x003671b7Ff5CB7F5d9B7E3a0637839D8624ca5AA">
-                                            Euler PT-syrupUSDT-29JAN2026 (Plasma)
-                                        </button>
-                                    </div>
                                 </div>
-                            </div>
 
-                            <!-- Chain Selection -->
-                            <div class="form-group">
-                                <label for="chainSelect" class="form-label">Blockchain Network</label>
-                                <select id="chainSelect" class="form-control">
-                                    <option value="1">Ethereum Mainnet</option>
-                                    <option value="42161">Arbitrum One</option>
-                                    <option value="8453">Base</option>
-                                    <option value="10">Optimism</option>
-                                    <option value="9745" selected>Plasma</option>
-                                </select>
-                            </div>
-
-                            <!-- Scan Depth -->
-                            <div class="form-group">
-                                <label for="scanDepth" class="form-label">Analysis Depth</label>
-                                <select id="scanDepth" class="form-control">
-                                    <option value="quick">Quick Scan (~50k blocks, ~14 hours on Plasma)</option>
-                                    <option value="standard" selected>Standard Scan (~300k blocks, ~3-4 days on Plasma)</option>
-                                    <option value="deep">Deep Scan (~1.5M blocks, ~17 days on Plasma)</option>
-                                    <option value="complete">Complete History (All blocks)</option>
-                                </select>
-                                <small class="form-help">Deeper scans take longer but provide more complete analysis</small>
-                            </div>
-
-                            <!-- Query Controls -->
-                            <div class="form-group query-controls">
-                                <div class="checkbox-group">
-                                    <label class="checkbox-label">
-                                        <input type="checkbox" id="includeWithdrawn" checked>
-                                        Include Withdrawn Positions
-                                    </label>
+                                <!-- Chain Selection -->
+                                <div class="form-group">
+                                    <label for="chainSelect" class="form-label">Blockchain Network</label>
+                                    <select id="chainSelect" class="form-control">
+                                        <option value="1">Ethereum Mainnet</option>
+                                        <option value="42161">Arbitrum One</option>
+                                        <option value="8453">Base</option>
+                                        <option value="10">Optimism</option>
+                                        <option value="9745" selected>Plasma</option>
+                                    </select>
                                 </div>
-                                <div class="input-group">
+
+                                <!-- Scan Depth -->
+                                <div class="form-group">
+                                    <label for="scanDepth" class="form-label">Analysis Depth</label>
+                                    <select id="scanDepth" class="form-control">
+                                        <option value="quick">Quick Scan (~50k blocks)</option>
+                                        <option value="standard" selected>Standard Scan (~300k blocks)</option>
+                                        <option value="deep">Deep Scan (~1.5M blocks)</option>
+                                        <option value="complete">Complete History</option>
+                                    </select>
+                                    <small class="form-help">Deeper scans take longer but provide more complete analysis</small>
+                                </div>
+
+                                <!-- Min Threshold -->
+                                <div class="form-group">
                                     <label for="minThreshold" class="form-label">Min. Deposit Threshold</label>
                                     <input type="number" id="minThreshold" class="form-control" value="0" min="0" step="0.01">
                                 </div>
-                            </div>
 
-                            <!-- Action Button -->
-                            <div class="form-group">
-                                <button id="analyzeVault" class="btn btn--primary btn--full-width">
-                                    <span class="btn-text">Analyze Vault</span>
-                                    <span class="loading-spinner hidden">⏳</span>
-                                </button>
-                                <div id="analysisProgress" class="analysis-progress hidden">
-                                    <div class="progress-info">
-                                        <span id="progressStatus">Initializing...</span>
-                                        <span id="progressTime">0s</span>
-                                    </div>
-                                    <div class="progress-bar-container">
-                                        <div id="progressBar" class="progress-bar" style="width: 0%"></div>
-                                    </div>
-                                    <div class="progress-actions">
-                                        <button id="continueInBackground" class="btn btn--outline btn--sm hidden">Continue in Background</button>
-                                        <button id="cancelAnalysis" class="btn btn--outline btn--sm">Cancel</button>
+                                <!-- Include Withdrawn Checkbox -->
+                                <div class="form-group field-include-withdrawn">
+                                    <div class="checkbox-group">
+                                        <label class="checkbox-label">
+                                            <input type="checkbox" id="includeWithdrawn" checked>
+                                            Include Withdrawn Positions
+                                        </label>
                                     </div>
                                 </div>
+
+                                <!-- Action Button -->
+                                <div class="form-group">
+                                    <button id="analyzeButton" class="btn btn--primary analyze-btn" aria-live="polite" aria-busy="false" aria-controls="analysisProgress">
+                                        <span class="btn-label">Analyze Vault</span>
+                                        <span class="spinner" hidden aria-hidden="true"></span>
+                                    </button>
+                                </div>
                             </div>
-                        </div>
+
+                            <!-- Progress Panel -->
+                            <aside id="analysisProgress" class="progress-panel" role="status" aria-live="polite" hidden>
+                                <div class="progress-header" id="progressHeader">Scanning recent activity…</div>
+                                <div class="progress-bar" aria-hidden="true"><span class="indeterminate"></span></div>
+                                <div class="progress-meta">
+                                    <span id="progressElapsed">0s</span>
+                                </div>
+                                <div class="progress-actions">
+                                    <button id="continueInBackground" class="btn btn--outline btn--sm hidden">Continue in Background</button>
+                                    <button id="cancelAnalysis" class="btn btn--outline btn--sm">Cancel</button>
+                                </div>
+                            </aside>
+                        </section>
+
+                        <!-- Screen-reader status announcements -->
+                        <div id="srAnalysisStatus" class="sr-only" aria-live="polite"></div>
                     </div>
                 </div>
             </section>

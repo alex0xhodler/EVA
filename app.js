@@ -273,16 +273,46 @@ class VaultTracker {
             });
         });
 
-        // Analyze vault button
-        const analyzeBtn = document.getElementById('analyzeVault');
-        console.log('Analyze vault button found:', !!analyzeBtn);
-        if (analyzeBtn) {
-            analyzeBtn.addEventListener('click', () => {
-                console.log('🟢 Button click event triggered');
-                this.analyzeVault();
+        // Analyze vault buttons (new and old)
+        const newAnalyzeBtn = document.getElementById('analyzeButton');
+        const oldAnalyzeBtn = document.getElementById('analyzeVault');
+        
+        console.log('New analyze button found:', !!newAnalyzeBtn);
+        console.log('Old analyze button found:', !!oldAnalyzeBtn);
+        
+        // Wire up new button if it exists
+        if (newAnalyzeBtn) {
+            newAnalyzeBtn.addEventListener('click', async (e) => {
+                e.preventDefault();
+                console.log('🟢 New analyze button clicked');
+                setAnalyzingUI(true);
+                try {
+                    await this.analyzeVault();
+                } catch (error) {
+                    console.error('Analysis failed:', error);
+                } finally {
+                    setAnalyzingUI(false);
+                }
             });
-        } else {
-            console.error('❌ Analyze vault button not found!');
+        }
+        
+        // Wire up old button as fallback
+        if (oldAnalyzeBtn) {
+            oldAnalyzeBtn.addEventListener('click', async () => {
+                console.log('🟢 Old analyze button clicked');
+                setAnalyzingUI(true);
+                try {
+                    await this.analyzeVault();
+                } catch (error) {
+                    console.error('Analysis failed:', error);
+                } finally {
+                    setAnalyzingUI(false);
+                }
+            });
+        }
+        
+        if (!newAnalyzeBtn && !oldAnalyzeBtn) {
+            console.error('❌ No analyze button found!');
         }
         
         const retryBtn = document.getElementById('retryButton');
@@ -320,7 +350,13 @@ class VaultTracker {
         
         const cancelBtn = document.getElementById('cancelAnalysis');
         if (cancelBtn) {
-            cancelBtn.addEventListener('click', () => this.cancelAnalysis());
+            cancelBtn.addEventListener('click', () => {
+                this.cancelAnalysis();
+                setAnalyzingUI(false);
+                // SR announcement
+                const sr = document.getElementById('srAnalysisStatus');
+                if (sr) sr.textContent = 'Analysis cancelled.';
+            });
         }
     }
 
@@ -569,7 +605,7 @@ class VaultTracker {
             
             if (this.analysisState.isCancelled) return { depositEvents: [], withdrawEvents: [] };
 
-            this.updateAnalysisProgress(15, 'Scanning recent activity...');
+            this.updateAnalysisProgress(15, 'Scanning recent activity…');
 
             // Phase 1: Recent activity scan using chunked topics
             const recentScan = await this.scanByChunksWithTopics(
@@ -1867,6 +1903,141 @@ class VaultTracker {
     }
 }
 
+// UI Analysis State Management
+const UI = {
+    container: null,
+    row: null,
+    analyzeBtn: null,
+    oldAnalyzeBtn: null, // fallback for existing button
+    cancelBtn: null,
+    progressPanel: null,
+    progressHeader: null,
+    progressElapsed: null,
+    sr: null,
+    
+    init() {
+        this.container = document.getElementById('search-controls');
+        this.row = document.getElementById('controls-row');
+        this.analyzeBtn = document.getElementById('analyzeButton');
+        this.oldAnalyzeBtn = document.getElementById('analyzeVault'); // fallback
+        this.cancelBtn = document.getElementById('cancelAnalysis');
+        this.progressPanel = document.getElementById('analysisProgress');
+        this.progressHeader = document.getElementById('progressHeader');
+        this.progressElapsed = document.getElementById('progressElapsed');
+        this.sr = document.getElementById('srAnalysisStatus');
+    },
+    
+    // Collect all interactive elements that must be disabled during analysis
+    inputs() {
+        if (!this.row) return [];
+        return Array.from(this.row.querySelectorAll('input, select, button, [role="button"]'))
+            .filter(el => el.id !== 'cancelAnalysis'); // keep cancel clickable
+    }
+};
+
+let analysisTimerId = null;
+let analysisStartTs = 0;
+
+function setAnalyzingUI(on) {
+    if (!UI.container && !UI.oldAnalyzeBtn) return;
+    
+    // Set analyzing state on container
+    if (UI.container) {
+        UI.container.dataset.analyzing = on ? 'true' : 'false';
+    }
+
+    // Handle new analyze button (if it exists)
+    const activeButton = UI.analyzeBtn || UI.oldAnalyzeBtn;
+    if (activeButton) {
+        activeButton.disabled = on;
+        activeButton.setAttribute('aria-busy', String(on));
+        
+        // Update button text and spinner
+        if (UI.analyzeBtn) {
+            // New button structure
+            const label = UI.analyzeBtn.querySelector('.btn-label');
+            const spinner = UI.analyzeBtn.querySelector('.spinner');
+            if (label) label.textContent = on ? 'Analyzing…' : 'Analyze Vault';
+            if (spinner) spinner.hidden = !on;
+        } else {
+            // Old button structure fallback
+            const btnText = activeButton.querySelector('.btn-text');
+            const loadingSpinner = activeButton.querySelector('.loading-spinner');
+            if (btnText) btnText.textContent = on ? 'Analyzing…' : 'Analyze Vault';
+            if (loadingSpinner) {
+                loadingSpinner.classList.toggle('hidden', !on);
+            }
+            activeButton.classList.toggle('loading', on);
+        }
+    }
+
+    // Disable/enable all inputs
+    UI.inputs().forEach(el => {
+        if (el === activeButton) return; // handled above
+        try {
+            el.disabled = on;
+            el.setAttribute('aria-disabled', String(on));
+        } catch (e) {
+            // Some elements might not support disabled
+            console.warn('Could not disable element:', el, e);
+        }
+    });
+    
+    // Also disable example vault buttons
+    document.querySelectorAll('.example-vault').forEach(btn => {
+        btn.disabled = on;
+        if (on) {
+            btn.setAttribute('aria-disabled', 'true');
+        } else {
+            btn.removeAttribute('aria-disabled');
+        }
+    });
+
+    // Progress panel visibility + header
+    const progressPanel = UI.progressPanel || document.getElementById('analysisProgress');
+    if (progressPanel) {
+        progressPanel.hidden = !on;
+        
+        if (on) {
+            // Set initial progress message
+            const progressHeader = UI.progressHeader || document.getElementById('progressStatus');
+            if (progressHeader) {
+                progressHeader.textContent = 'Scanning recent activity…';
+            }
+            
+            // Start timer
+            analysisStartTs = Date.now();
+            const elapsed = UI.progressElapsed || document.getElementById('progressTime');
+            if (elapsed) elapsed.textContent = '0s';
+            
+            clearInterval(analysisTimerId);
+            analysisTimerId = setInterval(() => {
+                const elapsedEl = UI.progressElapsed || document.getElementById('progressTime');
+                if (elapsedEl) {
+                    const s = Math.max(0, Math.floor((Date.now() - analysisStartTs) / 1000));
+                    elapsedEl.textContent = `${s}s`;
+                }
+            }, 1000);
+        } else {
+            clearInterval(analysisTimerId);
+        }
+    }
+
+    // SR announcement
+    if (UI.sr) {
+        UI.sr.textContent = on ? 'Analyzing vault. Scanning recent activity.' : 'Analysis idle.';
+    }
+    
+    // Focus management
+    if (on) {
+        // Keep focus on the analyze button during analysis
+        activeButton?.focus();
+    } else {
+        // Return focus to analyze button after completion/cancellation
+        setTimeout(() => activeButton?.focus(), 100);
+    }
+}
+
 // Initialize the application when DOM is ready
 if (document.readyState === 'loading') {
     document.addEventListener('DOMContentLoaded', initializeApp);
@@ -1876,9 +2047,15 @@ if (document.readyState === 'loading') {
 
 function initializeApp() {
     console.log('🚀 Initializing Vault Tracker application...');
+    
+    // Initialize UI state management
+    UI.init();
+    
     const vaultTracker = new VaultTracker();
     
     // Make it globally available for event handlers
     window.vaultTracker = vaultTracker;
+    window.setAnalyzingUI = setAnalyzingUI; // For external access
+    
     console.log('✅ Vault Tracker initialized successfully');
 }
