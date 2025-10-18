@@ -1781,6 +1781,11 @@ select.form-control option {
   to { transform: rotate(360deg); }
 }
 
+/* Ensure spinner stays hidden when [hidden] attribute is present */
+.analyze-btn .spinner[hidden] {
+  display: none !important;
+}
+
 .analyze-btn[aria-busy="true"] {
   cursor: progress;
 }

@@ -1700,19 +1700,26 @@ class VaultTracker {
             backgroundMode: false
         };
         
-        // Show progress UI
-        document.getElementById('analysisProgress').classList.remove('hidden');
-        document.getElementById('analyzeVault').disabled = true;
+        // Show progress UI (support new and old markup)
+        const progressEl = document.getElementById('analysisProgress');
+        if (progressEl) {
+            progressEl.hidden = false;
+            progressEl.classList?.remove('hidden');
+        }
+        const analyzeBtnEl = document.getElementById('analyzeButton') || document.getElementById('analyzeVault');
+        if (analyzeBtnEl) analyzeBtnEl.disabled = true;
         
         // Start timer
         this.progressTimer = setInterval(() => {
             if (this.analysisState.isRunning && !this.analysisState.backgroundMode) {
                 const elapsed = Math.floor((Date.now() - this.analysisState.startTime) / 1000);
-                document.getElementById('progressTime').textContent = `${elapsed}s`;
+                const timeEl = document.getElementById('progressTime') || document.getElementById('progressElapsed');
+                if (timeEl) timeEl.textContent = `${elapsed}s`;
                 
                 // Show "continue in background" option after 30 seconds
-                if (elapsed > 30) {
-                    document.getElementById('continueInBackground').classList.remove('hidden');
+                const cont = document.getElementById('continueInBackground');
+                if (elapsed > 30 && cont) {
+                    cont.classList.remove('hidden');
                 }
             }
         }, 1000);
@@ -1725,8 +1732,12 @@ class VaultTracker {
         this.analysisState.status = status;
         
         if (!this.analysisState.backgroundMode) {
-            document.getElementById('progressBar').style.width = `${percent}%`;
-            document.getElementById('progressStatus').textContent = status;
+            const bar = document.getElementById('progressBar');
+            if (bar && bar.style) {
+                bar.style.width = `${percent}%`;
+            }
+            const statusEl = document.getElementById('progressStatus') || document.getElementById('progressHeader');
+            if (statusEl) statusEl.textContent = status;
         }
         
         console.log(`📈 Progress: ${percent}% - ${status}`);
@@ -1740,10 +1751,16 @@ class VaultTracker {
             this.progressTimer = null;
         }
         
-        // Hide progress UI
-        document.getElementById('analysisProgress').classList.add('hidden');
-        document.getElementById('analyzeVault').disabled = false;
-        document.getElementById('continueInBackground').classList.add('hidden');
+        // Hide progress UI (support new and old markup)
+        const progressEl = document.getElementById('analysisProgress');
+        if (progressEl) {
+            progressEl.hidden = true;
+            progressEl.classList?.add('hidden');
+        }
+        const analyzeBtnEl = document.getElementById('analyzeButton') || document.getElementById('analyzeVault');
+        if (analyzeBtnEl) analyzeBtnEl.disabled = false;
+        const cont = document.getElementById('continueInBackground');
+        if (cont) cont.classList.add('hidden');
     }
     
     continueInBackground() {
