@@ -266,15 +266,26 @@ class VaultTracker {
             btn.addEventListener('click', (e) => {
                 const address = e.target.getAttribute('data-address');
                 document.getElementById('vaultAddress').value = address;
-                if (address && plasmaExamples.has(address.toLowerCase())) {
-                    document.getElementById('chainSelect').value = '9745';
-                    console.log('🌐 Auto-selected Plasma network for this vault');
-                } else {
-                    document.getElementById('chainSelect').value = '1';
-                    console.log('🌐 Auto-selected Ethereum network for this vault');
-                }
+                document.getElementById('chainSelect').value = autoSelectNetwork(address);
             });
         });
+
+        // Known example networks
+        const arbitrumExamples = new Set([
+            '0xe4783824593a50bfe9dc873204cec171ebc62de0'
+        ]);
+        const ethereumExamples = new Set([
+            '0xb072b2779f1ef1a6a9d2d5faa1766f341b92ab3a',
+            '0x3b4802fdb0e5d74aa37d58fd77d63e93d4f9a4af'
+        ]);
+
+        function autoSelectNetwork(address) {
+            const addr = (address || '').toLowerCase();
+            if (plasmaExamples.has(addr)) return '9745';
+            if (arbitrumExamples.has(addr)) return '42161';
+            if (ethereumExamples.has(addr)) return '1';
+            return '1';
+        }
 
         const exampleSelect = document.getElementById('exampleVaults');
         if (exampleSelect) {
@@ -282,13 +293,7 @@ class VaultTracker {
                 const address = e.target.value;
                 if (!address) return;
                 document.getElementById('vaultAddress').value = address;
-                if (plasmaExamples.has(address.toLowerCase())) {
-                    document.getElementById('chainSelect').value = '9745';
-                    console.log('🌐 Auto-selected Plasma network for this vault');
-                } else {
-                    document.getElementById('chainSelect').value = '1';
-                    console.log('🌐 Auto-selected Ethereum network for this vault');
-                }
+                document.getElementById('chainSelect').value = autoSelectNetwork(address);
             });
         }
 
